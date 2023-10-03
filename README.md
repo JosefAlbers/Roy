@@ -37,7 +37,7 @@ s = roy.generate(s)
 
 ```python
 s = 'Create a text to image generator.'
-r = roy.retrieve(user_request, n_topk=3, src='huggingface')
+r = roy.retrieve(s, n_topk=3, src='huggingface')
 r = roy.format('Modify the [Example Code] to fulfill the [User Request] using minimal changes...', r)
 [roy.generate(s) for s in r]
 ```
