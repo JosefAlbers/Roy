@@ -116,8 +116,9 @@ By utilizing these principles, our self-organizing chat group remains in a state
 
 Roy redefines the paradigm of LLM application development, emphasizing simplicity, versatility, and transparency. Whether your aim is a basic LLM interaction or an elaborate multi-agent system, Roy provides the architecture to realize it.
 
-For those who've made it this far, we believe you share our passion. Dive into Roy, discover its potential, and collaborate with us to sculpt the future of LLM applications.
+For those who've made it this far, I believe you share my passion. Dive into Roy, discover its potential, and join me in exploring the future of LLM applications.
 
+If you found this project helpful or interesting and want to support more of these experiments, feel free to buy me a coffee!
 
 <a href="https://www.buymeacoffee.com/albersj66a" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="25" width="100"></a>
 
