@@ -1,0 +1,9 @@
+accelerate==0.23.0
+auto-gptq==0.4.2
+faiss-cpu==1.7.4
+transformers==4.33.2
+optimum==1.13.1
+torch==2.0.1
+prompt-toolkit
+pandas
+tqdm
