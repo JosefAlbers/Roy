@@ -1,6 +1,7 @@
 # Roy
 
-[<img align="center" src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/JosefAlbers/Roy/blob/main/quickstart.ipynb)
+[<img src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/JosefAlbers/Roy/blob/main/quickstart.ipynb)
+[![DOI](https://zenodo.org/badge/699801819.svg)](https://zenodo.org/badge/latestdoi/699801819)
 
 Roy is a lightweight alternative to `autogen`, for crafting advanced multi-agent systems using language models.
 
@@ -116,3 +117,7 @@ By utilizing these principles, our self-organizing chat group remains in a state
 Roy redefines the paradigm of LLM application development, emphasizing simplicity, versatility, and transparency. Whether your aim is a basic LLM interaction or an elaborate multi-agent system, Roy provides the architecture to realize it.
 
 For those who've made it this far, we believe you share our passion. Dive into Roy, discover its potential, and collaborate with us to sculpt the future of LLM applications.
+
+
+<a href="https://www.buymeacoffee.com/albersj66a" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
+
