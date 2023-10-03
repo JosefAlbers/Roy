@@ -119,5 +119,5 @@ Roy redefines the paradigm of LLM application development, emphasizing simplicit
 For those who've made it this far, we believe you share our passion. Dive into Roy, discover its potential, and collaborate with us to sculpt the future of LLM applications.
 
 
-<a href="https://www.buymeacoffee.com/albersj66a" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
+<a href="https://www.buymeacoffee.com/albersj66a" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="25" width="100"></a>
 
