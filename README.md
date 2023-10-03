@@ -19,6 +19,7 @@ Roy is a lightweight alternative to `autogen`, for crafting advanced multi-agent
 git clone https://github.com/JosefAlbers/Roy
 cd Roy
 pip install -r requirements.txt
+pip install -U transformers optimum accelerate auto-gptq --extra-index-url https://huggingface.github.io/autogptq-index/whl/cu118/
 ```
 
 ```python
@@ -39,14 +40,14 @@ s = roy.generate(s)
 ```python
 s = 'Create a text to image generator.'
 r = roy.retrieve(s, n_topk=3, src='huggingface')
-r = roy.format('Modify the [Example Code] to fulfill the [User Request] using minimal changes...', r)
+r = roy.format('Modify the [Example Code] to fulfill the [User Request] using minimal changes. Keep the modifications minimal by making only the necessary modifications.\n\n[User Request]:\n"{user_request}"\n\n[Context]:\n{retrieved_docstr}\n\n[Example Code]:\n```python\n{retrieved_code}\n```', r)
 [roy.generate(s) for s in r]
 ```
 
 ### **Auto Feedback**
 
 ```python
-s = 'Find arxiv papers that show how are people studying trust calibration in AI based systems'
+s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection."
 for i in range(3):
     c = roy.generate(s)
     s += c
