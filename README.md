@@ -1,6 +1,6 @@
 # Roy
 
-[Open in Colab]
+[<img align="center" src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/JosefAlbers/Roy/blob/main/quickstart.ipynb)
 
 Roy is a lightweight alternative to `autogen`, for crafting advanced multi-agent systems using language models.
 
