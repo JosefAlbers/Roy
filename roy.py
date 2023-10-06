@@ -20,21 +20,21 @@ import argparse
 import sys
 from tqdm.auto import tqdm
 
-DEBUG = True
+LOG_LEVEL = 5
 
-def print_color(s, c=1):
-    if DEBUG is True:
-        print(f'\033[{31+c}m{s}\033[0m')
+def log(s, log_level=5):
+    if log_level < LOG_LEVEL+1:
+        print(f'\033[{31+log_level}m{s}\033[0m')
 
 def trace_method(func):
     def wrapper(*args, **kwargs):
         input_str = args[0] if isinstance(args[0], str) else args[1]
-        print_color(f"{func.__name__}() receives:\n{indent(input_str, '    ')}", 4)
+        log(f"{func.__name__}() receives:\n{indent(input_str, '    ')}", 2)
         result = func(*args, **kwargs)
         if isinstance(result, str):
-            print_color(f"{func.__name__}() returns:\n{indent(result, '    ')}", 3)
+            log(f"{func.__name__}() returns:\n{indent(result, '    ')}", 1)
         else:
-            print_color(f"{func.__name__}() returns an object of type: {type(result)}", 3)
+            log(f"{func.__name__}() returns an object of type: {type(result)}", 1)
         return result
     return wrapper
         
@@ -134,7 +134,7 @@ class VirtualEnvironment:
                 self.python_executable = os.path.join(venv_path, "bin", "python")
                 self.pip_executable = os.path.join(venv_path, "bin", "pip")
         except:
-            print("Warning: Failed to create or locate virtual environment. Using default system python and pip.")
+            log("Warning: Failed to create or locate virtual environment. Using default system python and pip.")
             self.python_executable = "python"
             self.pip_executable = "pip"
 
@@ -244,81 +244,68 @@ class LM:
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
 
     @torch.no_grad()
-    def _beam(self, input_txt, root_kv=None, result_kv_fn=None, max_new_tokens=300, num_beams=3, save_kv=False, pass_token = []):
-        if root_kv is None:
-            perInput_input_ids = self.tokenizer(input_txt, add_special_tokens=True, return_tensors='pt').input_ids.to(self.model.device)
-            perInput_output_tokens = []
-        else:
-            perInput_input_ids = self.tokenizer(input_txt, add_special_tokens=False, return_tensors='pt').input_ids[:, 1:].to(self.model.device)
-            perInput_output_tokens = perInput_input_ids[0].tolist()
-        perInput_key_values = self.model(perInput_input_ids, use_cache=True, past_key_values=root_kv).past_key_values
-        beams = [(perInput_input_ids, perInput_output_tokens, 0.0, perInput_key_values)]
-        best_cc = (None, None, float('-inf'), None)
+    def _beam(self, input_beam, constraint, prohibits, num_beams, cache_fn, norm_factor = .0):
+        fn_to_save = os.path.join(os.getcwd(), cache_fn)
+        fn_to_load = os.path.join(os.getcwd(), input_beam[3]) if input_beam[3] is not None else None
+        beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None )]
+        max_new_tokens, required_tokens = constraint
+        required_tokens_pt = torch.tensor(required_tokens).unsqueeze(0).to(self.model.device)
+        best_postfixed = (None, None, float('-inf'), None)
+        best_compatibility = float('-inf')
         for i in range(max_new_tokens):
+            best_voluntary = (None, None, float('-inf'), None)
             new_beams = []
             for beam in beams:
                 beam_input_ids, beam_output_tokens, beam_score, beam_kv = beam
-                _new_outputs = self.model(beam_input_ids[:, -1:], use_cache=True, past_key_values=beam_kv)
-                _new_logits = _new_outputs.logits[:, -1, :]
-                new_kv = _new_outputs.past_key_values
-                topk = torch.topk(_new_logits, num_beams)
-                for next_token_id, next_score in zip(topk.indices[0], topk.values[0]):
-                    if next_token_id in pass_token:
-                        continue
-                    new_input_ids = torch.cat((beam_input_ids, next_token_id.unsqueeze(0).unsqueeze(0)), dim=1)
-                    new_output_tokens = beam_output_tokens + [next_token_id.item()]
-                    new_score = ((beam_score * len(beam_output_tokens)) + next_score.item()) / len(new_output_tokens)
-
-                    if next_token_id == self.tokenizer.eos_token_id:
-                        if sum(token_id_i in {28956, 7521} for token_id_i in beam_output_tokens) % 2 == 0:
-                            if new_score > best_cc[2]:
-                                best_cc = (beam_input_ids, beam_output_tokens, new_score, beam_kv)
+                new_outputs = self.model(beam_input_ids, use_cache=True, past_key_values=beam_kv)
+                new_logits = new_outputs.logits[:, -1, :]
+                new_kv = new_outputs.past_key_values
+                topk = torch.topk(new_logits, num_beams)
+                list_next_token_id = topk.indices[0]
+                list_next_score = topk.values[0]
+                list_next_token_id = torch.cat((list_next_token_id, required_tokens_pt[:, 0]), dim=0)
+                head_score = new_logits[:, required_tokens[0]]
+                diff_score = head_score - torch.mean(list_next_score)
+                list_next_score = torch.cat((list_next_score, head_score), dim=0)
+                if diff_score > best_compatibility:
+                    if len(required_tokens) > 1:
+                        candidate_output = self.model(required_tokens_pt[:, :-1], use_cache=False, past_key_values=new_kv)
+                        rest_score = torch.sum(torch.cat([candidate_output.logits[:,i,required_tokens[i+1]] for i in range(len(required_tokens)-1)]) , dim = 0)
                     else:
-                        if (new_output_tokens[-3:] != [13]*3) and (new_output_tokens[-4:] != [13, 30004, 13, 13]) and (new_output_tokens[-4:] != [13, 30004, 13, 30004]):
-                            new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
-                            new_beams.append(new_beam)
-                            new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
+                        rest_score = .0
+                    force_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + head_score + rest_score) / (len(beam_output_tokens) + len(required_tokens) + norm_factor)
+                    if force_score > best_postfixed[2]:
+                        best_postfixed = (required_tokens_pt, beam_output_tokens + required_tokens, force_score, new_kv)
+                        best_compatibility = diff_score
+                for next_token_id, next_score in zip(list_next_token_id, list_next_score):
+                    new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
+                    new_output_tokens = beam_output_tokens + [next_token_id.item()]
+                    new_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + next_score.item()) / (len(new_output_tokens) + norm_factor)
+                    if next_token_id == self.tokenizer.eos_token_id:
+                        continue
+                    elif all(new_output_tokens[-len(p):] != p for p in prohibits):
+                        new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
+                        new_beams.append(new_beam)
+                        new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
+                        if (new_output_tokens[-len(required_tokens):] == required_tokens) and (new_score > best_voluntary[2]):
+                            best_voluntary = new_beam
+            if best_voluntary[2] >= new_beams[-1][2]:
+                torch.save(best_voluntary[-1], fn_to_save)
+                return (*best_voluntary[:-1], cache_fn)
             beams = new_beams
-            if best_cc[2] > beams[0][2]:
-                break
-
-        best_beam = max([best_cc]+beams, key=lambda x: x[2])
-        decoded_output = self.tokenizer.decode(best_beam[1])
-        if save_kv is True:
-            torch.save(best_beam[3], result_kv_fn)
-        return decoded_output
-
-    @torch.no_grad()
-    def _greedy(self, input_txt, past_kv, max_new_tokens=300, until=[28956, 7521]):
-        input_ids = self.tokenizer(input_txt, add_special_tokens=False, return_tensors='pt').input_ids.to(self.model.device)
-        next_token_id = input_ids[:,-1:]
-        generated_tokens = []
-        for _ in range(max_new_tokens):
-            outputs = self.model(next_token_id, past_key_values=past_kv)
-            next_token_id = outputs.logits[:, -1, :].argmax(dim=1)
-            past_kv = outputs.past_key_values
-            next_token_id = next_token_id.unsqueeze(0)
-            next_token_id_item = next_token_id.item()
-            generated_tokens.append(next_token_id_item)
-            if next_token_id_item in until:
-                break
-        decoded_output = self.tokenizer.decode(generated_tokens)
-        return decoded_output
+        torch.save(best_postfixed[-1], fn_to_save)
+        return (*best_postfixed[:-1], cache_fn)
     
     @torch.no_grad()
-    def generate(self, input_txt):
-        o_beam = self._beam(input_txt, result_kv_fn = 'tmp_kv', save_kv=True, max_new_tokens=500)
-        torch.cuda.empty_cache()
-        if o_beam.count('```') == 0:
-            o_open = self._beam('\n```', root_kv=torch.load('tmp_kv'), result_kv_fn = 'tmp_kv', save_kv=True, max_new_tokens=400)
+    def generate(self, input_txt, constraints = [(20, [13, 28956, 4691]), (900, [13, 28956])], prohibits = ([13, 13, 13], [13, 30004, 13, 13], [13, 30004, 13, 30004]), num_beams = 3, cache_fn = 'kv'): 
+        os.remove(cache_fn) if os.path.exists(cache_fn) else None
+        i_beam = (self.tokenizer(input_txt, add_special_tokens=True, return_tensors='pt').input_ids, None, None, None)
+        result = []
+        for i, constraint in enumerate(constraints):
+            i_beam = self._beam(i_beam, constraint = constraints[i], prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
             torch.cuda.empty_cache()
-            o_beam += o_open
-        if o_beam.count('```') % 2 != 0:
-            o_close = self._greedy(o_beam, torch.load('tmp_kv'), until=[28956, 7521])
-            torch.cuda.empty_cache()
-            o_beam += o_close
-        o_beam = o_beam.replace('\r', '')
-        return o_beam
+            result += i_beam[1]
+        return self.tokenizer.decode(result)
     
 class Roy:
     def __init__(self, config=None):
