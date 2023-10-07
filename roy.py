@@ -2,6 +2,7 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import sys
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
 from huggingface_hub import hf_hub_download
 import faiss
@@ -50,13 +51,26 @@ def extract_code_block(text_w_code, join_all = True):
         code = codes[-1]
     return code
     
-def trim_str(row, char_limit, variable_str, constant_str):
+def truncate_string(row, char_limit, variable_str, constant_str):
     if not (isinstance(row[variable_str], str) and isinstance(row[constant_str], str)):
         return ""
     if len(row[constant_str]) >= char_limit:
         return ""
     trimmed_length = char_limit - len(row[constant_str])
     return row[variable_str][:trimmed_length]
+
+def process_string(s):
+    if '>>>' not in s:
+        return s
+
+    def replace_line_prefix(match):
+        prefix = match.group(1)
+        if prefix in [">>> ", "... "]:
+            return ""
+        return "# " + match.group(0)
+    
+    pattern = r"^(>>> |... |\S+.*$)"
+    return re.sub(pattern, replace_line_prefix, s, flags=re.MULTILINE)
 
 def process_markdown_data(df):
     df = df[~df['filepath'].str.contains('/zh/')]
@@ -71,23 +85,11 @@ def process_docstr_data(df):
     df.reset_index(drop=True, inplace=True)
     df['filepath'] = df['filepath'].str[7:].str.rstrip('/.')
     df['root_dir'] = df['filepath'].apply(lambda x: x.split('/')[0])
-    df['retrieved_code'] = df['docstring'].apply(extract_code_block)
-    df['docstring'] = df.apply(trim_str, args=(5000,'docstring','retrieved_code'), axis=1)
+    df['retrieved_code'] = df['docstring'].apply(extract_code_block).apply(process_string)
+    df['docstring'] = df.apply(truncate_string, args=(5000,'docstring','retrieved_code'), axis=1)
     df['retrieved_docstr'] = df.apply(lambda row: f"{row['type']} `{row['filepath'].split('/')[-1]}` ({row['filepath']}):\n'''\n{row['docstring']}...\n'''", axis=1)
     return df
 
-def process_string(s):
-    if '>>>' not in s:
-        return s
-
-    def replace_line_prefix(match):
-        prefix = match.group(1)
-        if prefix in [">>> ", "... "]:
-            return ""
-        return "# " + match.group(0)
-    
-    pattern = r"^(>>> |... |\S+.*$)"
-    return re.sub(pattern, replace_line_prefix, s, flags=re.MULTILINE)
 
 def edit_code_in_terminal(initial_text):
     kb = KeyBindings()
@@ -169,7 +171,7 @@ class VirtualEnvironment:
         return '\n' +  '\n'.join([self._run_sh(s) for s in lines_with_exclamation]) + '\n'
     
     def execute(self, code_string, is_python=True):
-        code_string = extract_code_block(code_string)
+        # code_string = extract_code_block(code_string)
         if is_python is True:
             return self._run_py(code_string)
         return '\n' + '\n'.join([self._run_sh(s) for s in code_string.splitlines()]) + '\n'
@@ -242,14 +244,19 @@ class LM:
         self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="auto", revision="main")
         self.model.eval()
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+        self.default_prohibits = [[13, 13, 13], [13, 30004, 13, 13], [13, 30004, 13, 30004]]
+        self.default_cwd = os.getcwd()
 
     @torch.no_grad()
-    def _beam(self, input_beam, constraint, prohibits, num_beams, cache_fn, norm_factor = .0):
-        fn_to_save = os.path.join(os.getcwd(), cache_fn)
-        fn_to_load = os.path.join(os.getcwd(), input_beam[3]) if input_beam[3] is not None else None
-        beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None )]
+    def _constrained_beam(self, input_beam, constraint, prohibits, num_beams, cache_fn, norm_factor = .0):
+        fn_to_save = os.path.join(self.default_cwd, cache_fn)
+        fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
+        prohibits = prohibits if prohibits else self.default_prohibits 
+        beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None)]
         max_new_tokens, required_tokens = constraint
-        required_tokens_pt = torch.tensor(required_tokens).unsqueeze(0).to(self.model.device)
+        required_tokens_pt = [torch.tensor(i).unsqueeze(0).to(self.model.device) for i in required_tokens]
+        unique_heads, inverse_indices = torch.unique(torch.tensor([i[0] for i in required_tokens]), return_inverse=True)
+        unique_heads = unique_heads.to(self.model.device)
         best_postfixed = (None, None, float('-inf'), None)
         best_compatibility = float('-inf')
         for i in range(max_new_tokens):
@@ -261,22 +268,19 @@ class LM:
                 new_logits = new_outputs.logits[:, -1, :]
                 new_kv = new_outputs.past_key_values
                 topk = torch.topk(new_logits, num_beams)
-                list_next_token_id = topk.indices[0]
-                list_next_score = topk.values[0]
-                list_next_token_id = torch.cat((list_next_token_id, required_tokens_pt[:, 0]), dim=0)
-                head_score = new_logits[:, required_tokens[0]]
-                diff_score = head_score - torch.mean(list_next_score)
-                list_next_score = torch.cat((list_next_score, head_score), dim=0)
+                unique_score = new_logits[0, unique_heads]
+                diff_score = torch.max(unique_score) - torch.mean(topk.values[0])
+                list_next_token_id = torch.cat((topk.indices[0], unique_heads), dim=0)
+                list_next_score = torch.cat((topk.values[0], unique_score), dim=0)
                 if diff_score > best_compatibility:
-                    if len(required_tokens) > 1:
-                        candidate_output = self.model(required_tokens_pt[:, :-1], use_cache=False, past_key_values=new_kv)
-                        rest_score = torch.sum(torch.cat([candidate_output.logits[:,i,required_tokens[i+1]] for i in range(len(required_tokens)-1)]) , dim = 0)
-                    else:
-                        rest_score = .0
-                    force_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + head_score + rest_score) / (len(beam_output_tokens) + len(required_tokens) + norm_factor)
-                    if force_score > best_postfixed[2]:
-                        best_postfixed = (required_tokens_pt, beam_output_tokens + required_tokens, force_score, new_kv)
-                        best_compatibility = diff_score
+                    for postfix_tokens, postfix_score in zip(required_tokens_pt, unique_score[inverse_indices]):
+                        if postfix_tokens.shape[1] > 1:
+                            postfix_logits = self.model(postfix_tokens[:,:-1], use_cache=False, past_key_values=new_kv).logits
+                            postfix_score += torch.sum(postfix_logits[0, torch.arange(postfix_tokens.shape[1]-1), postfix_tokens.squeeze(0)[1:]])
+                        forced_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + postfix_score) / (len(beam_output_tokens) + postfix_tokens.shape[1] + norm_factor)
+                        if forced_score > best_postfixed[2]:
+                            best_postfixed = (postfix_tokens, beam_output_tokens + postfix_tokens.squeeze(0).tolist(), forced_score, new_kv)
+                            best_compatibility = diff_score
                 for next_token_id, next_score in zip(list_next_token_id, list_next_score):
                     new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
                     new_output_tokens = beam_output_tokens + [next_token_id.item()]
@@ -287,7 +291,7 @@ class LM:
                         new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
                         new_beams.append(new_beam)
                         new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
-                        if (new_output_tokens[-len(required_tokens):] == required_tokens) and (new_score > best_voluntary[2]):
+                        if any(new_output_tokens[-len(sublist):] == sublist for sublist in required_tokens) and (new_score > best_voluntary[2]):
                             best_voluntary = new_beam
             if best_voluntary[2] >= new_beams[-1][2]:
                 torch.save(best_voluntary[-1], fn_to_save)
@@ -297,15 +301,96 @@ class LM:
         return (*best_postfixed[:-1], cache_fn)
     
     @torch.no_grad()
-    def generate(self, input_txt, constraints = [(20, [13, 28956, 4691]), (900, [13, 28956])], prohibits = ([13, 13, 13], [13, 30004, 13, 13], [13, 30004, 13, 30004]), num_beams = 3, cache_fn = 'kv'): 
+    def _unconstrained_beam(self, input_beam, max_new_tokens, prohibits, num_beams, cache_fn, norm_factor = .0, patience_limit = 10):
+        fn_to_save = os.path.join(self.default_cwd, cache_fn)
+        fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
+        prohibits = prohibits if prohibits else self.default_prohibits 
+        beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None )]
+        best_eos = (None, None, float('-inf'), None)
+        patience = float('inf')
+        for i in range(max_new_tokens):
+            if patience < 0:
+                break
+            else:
+                patience -= 1
+            new_beams = []
+            for beam in beams:
+                beam_input_ids, beam_output_tokens, beam_score, beam_kv = beam
+                new_outputs = self.model(beam_input_ids, use_cache=True, past_key_values=beam_kv)
+                new_logits = new_outputs.logits[:, -1, :]
+                new_kv = new_outputs.past_key_values
+                topk = torch.topk(new_logits, num_beams)
+                list_next_token_id = topk.indices[0]
+                list_next_score = topk.values[0]
+                if (self.tokenizer.eos_token_id in list_next_token_id) and (new_score > best_eos[2]):
+                    best_eos = beam
+                    patience = patience_limit
+                    continue
+                for next_token_id, next_score in zip(list_next_token_id, list_next_score):
+                    new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
+                    new_output_tokens = beam_output_tokens + [next_token_id.item()]
+                    new_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + next_score.item()) / (len(new_output_tokens) + norm_factor)
+                    if all(new_output_tokens[-len(p):] != p for p in prohibits):
+                        new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
+                        new_beams.append(new_beam)
+                        new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
+            beams = new_beams
+        result = max([best_eos] + beams, key=lambda x:x[2])
+        torch.save(result[-1], fn_to_save)
+        return (*result[:-1], cache_fn)
+    
+    def _get_constraints(self, template, default_padding=20, default_interval=500):
+        def tokenize_constraints(s):
+            if len(s) < 1:
+                return []
+            s = [s] if isinstance(s, str) else list(s)
+            s_ = ['\n'+i for i  in s]
+            input_ids = self.tokenizer(s+s_, add_special_tokens=False).input_ids
+            input_ids = [sub[1:] if sub and sub[0] == 29871 else sub for sub in input_ids]
+            input_ids[len(s):] = [i[1:] for i in input_ids[len(s):]]
+            return [list(x) for x in set(tuple(x) for x in input_ids)]
+        
+        if len(template) == 1:
+            if isinstance(template[0], int):
+                return [(template[0], None)]
+            return [(default_padding, tokenize_constraints(template[0]))]
+        template = list(template)
+        template = [default_padding] + template if not isinstance(template[0], int) else template
+        template = template + [''] if isinstance(template[-1], int) else template
+        fixed_template = []
+        expect_int = True
+        for i in template:
+            if (expect_int is True):
+                if (isinstance(i, int)):
+                    fixed_template.append(i)
+                    expect_int = False
+                else:
+                    fixed_template.extend([default_interval, i])
+                    expect_int = True
+            else:
+                fixed_template.append(i)
+                expect_int = True
+        assert len(fixed_template) % 2 == 0
+        constraints = [(fixed_template[i], tokenize_constraints(fixed_template[i+1])) for i in range(0, len(fixed_template), 2)]
+        return constraints
+    
+    @torch.no_grad()
+    def generate(self, input_txt, template = (('\n```python', '\n```sh'), '\n```'), constraints = None, prohibits = None, num_beams = 3, cache_fn = 'kv'):
         os.remove(cache_fn) if os.path.exists(cache_fn) else None
         i_beam = (self.tokenizer(input_txt, add_special_tokens=True, return_tensors='pt').input_ids, None, None, None)
         result = []
-        for i, constraint in enumerate(constraints):
-            i_beam = self._beam(i_beam, constraint = constraints[i], prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
-            torch.cuda.empty_cache()
-            result += i_beam[1]
-        return self.tokenizer.decode(result)
+        constraints = self._get_constraints(template) if constraints is None else constraints
+        for constraint in constraints:
+            if len(constraint[1]) < 1:
+                i_beam = self._unconstrained_beam(i_beam, max_new_tokens = constraint[0], prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
+                torch.cuda.empty_cache()
+                result += i_beam[1]
+                
+            else:
+                i_beam = self._constrained_beam(i_beam, constraint = constraint, prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
+                torch.cuda.empty_cache()
+                result += i_beam[1]
+        return extract_code_block(self.tokenizer.decode(result))
     
 class Roy:
     def __init__(self, config=None):
