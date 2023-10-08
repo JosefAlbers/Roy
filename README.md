@@ -30,15 +30,23 @@ roy = Roy()
 ### **Template-Based Generation**
 
 ```python
-s = 'Compare the year-to-date gain for META and TESLA.'
+s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?\n'
 s = roy.format(s)
-s = roy.generate(s)
+roy.generate(s)
+```
+
+### **Constrained Generation**
+
+```python
+roy.generate(s, ('```python', '```'))                    # Generate a python code block
+roy.generate(s, (('```python', '```javascript'), '```')) # Generate python or javascript codes
+roy.generate(s, ('```python', 100, '```'))               # Generate a code block of size less than 100 tokens
 ```
 
 ### **Retrieval Augmented Generation**
 
 ```python
-s = 'Create a text to image generator.'
+s = 'Create a text to image generator.\n'
 r = roy.retrieve(s, n_topk=3, src='huggingface')
 r = roy.format('Modify the [Example Code] to fulfill the [User Request] using minimal changes. Keep the modifications minimal by making only the necessary modifications.\n\n[User Request]:\n"{user_request}"\n\n[Context]:\n{retrieved_docstr}\n\n[Example Code]:\n```python\n{retrieved_code}\n```', r)
 [roy.generate(s) for s in r]
@@ -47,28 +55,26 @@ r = roy.format('Modify the [Example Code] to fulfill the [User Request] using mi
 ### **Auto Feedback**
 
 ```python
-s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection."
+s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection.\n"
+
 for i in range(3):
     c = roy.generate(s)
-    s += c
     s += roy.execute(c)
 ```
 
 ### **Auto Grind**
 
 ```python
-def auto_grind(user_request):
-    cache = {'user_request': user_request, 'py_code': roy.generate(user_request)}
-    for i in range(3):
-        cache['sh_out'] = roy.execute(cache['py_code'])
-        if 'Error' in cache['sh_out']:
-            feedback = roy.format('Debug the Code ("script.py") that had been written for this problem: "{user_request}"\n\n[Code]:\n```python\n{py_code}\n```\n\n[Error]:\n{sh_out}', cache)
-            cache['py_code'] = roy.generate(feedback)
-        else:
-            break
-    return cache
-
-auto_grind("Plot a chart of TESLA's stock price change YTD and save to 'stock_price_ytd.png'.")
+user_request = "Compare the year-to-date gain for META and TESLA.\n"
+ai_response = roy.generate(user_request)
+for i in range(3):
+    shell_execution = roy.execute(ai_response)
+    if 'ModuleNotFoundError' in shell_execution:
+        roy.execute(roy.generate(roy.format(f'Write a shell command to address the error encountered while running this Python code:\n\n{shell_execution}')), False)
+    elif 'Error' in shell_execution:
+        ai_response = roy.generate(roy.format(f'Modify the code to address the error encountered:\n\n{shell_execution}'))
+    else:
+        break
 ```
 
 ## Self-Organizing Multi-Agent System

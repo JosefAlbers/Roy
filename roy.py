@@ -18,7 +18,6 @@ from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style
 from pygments.lexers.python import Python3Lexer
 import argparse
-import sys
 from tqdm.auto import tqdm
 
 LOG_LEVEL = 5
@@ -39,18 +38,6 @@ def trace_method(func):
         return result
     return wrapper
         
-def extract_code_block(text_w_code, join_all = True):
-    pattern = r'```(?:\s*(\w+?)\s*\n)?(.*?)```'
-    matches = re.findall(pattern, text_w_code, re.DOTALL)
-    if len(matches) < 1:
-        return ''
-    codes = [i[1] for i in matches]
-    if join_all:
-        code = '\n\n'.join(codes)
-    else:
-        code = codes[-1]
-    return code
-    
 def truncate_string(row, char_limit, variable_str, constant_str):
     if not (isinstance(row[variable_str], str) and isinstance(row[constant_str], str)):
         return ""
@@ -59,7 +46,7 @@ def truncate_string(row, char_limit, variable_str, constant_str):
     trimmed_length = char_limit - len(row[constant_str])
     return row[variable_str][:trimmed_length]
 
-def process_string(s):
+def process_code_string(s):
     if '>>>' not in s:
         return s
 
@@ -71,6 +58,19 @@ def process_string(s):
     
     pattern = r"^(>>> |... |\S+.*$)"
     return re.sub(pattern, replace_line_prefix, s, flags=re.MULTILINE)
+
+def extract_code_block(s, is_python):
+    s = s.replace('\r', '')
+    s = process_code_string(s)
+    pattern = r'```(?:\s*(\w+?)\s*\n)?(.*?)```'
+    matches = re.findall(pattern, s, re.DOTALL)
+    if len(matches) < 1:
+        return ''
+    code = ''
+    for match in matches:
+        is_python = identify_lang(match) if is_python is None else is_python
+        code += match[1] if is_python else re.sub(r'(?<!!)^', '!', match[1], flags=re.MULTILINE)
+    return code.rstrip()
 
 def process_markdown_data(df):
     df = df[~df['filepath'].str.contains('/zh/')]
@@ -85,7 +85,7 @@ def process_docstr_data(df):
     df.reset_index(drop=True, inplace=True)
     df['filepath'] = df['filepath'].str[7:].str.rstrip('/.')
     df['root_dir'] = df['filepath'].apply(lambda x: x.split('/')[0])
-    df['retrieved_code'] = df['docstring'].apply(extract_code_block).apply(process_string)
+    df['retrieved_code'] = df['docstring'].apply(extract_code_block, args=(True,)).apply(process_code_string)
     df['docstring'] = df.apply(truncate_string, args=(5000,'docstring','retrieved_code'), axis=1)
     df['retrieved_docstr'] = df.apply(lambda row: f"{row['type']} `{row['filepath'].split('/')[-1]}` ({row['filepath']}):\n'''\n{row['docstring']}...\n'''", axis=1)
     return df
@@ -123,6 +123,22 @@ default_config_for_RM = {
     },
 }
 
+def identify_lang(match): # stub
+    if 'py' in match[0]:
+        is_python = True
+    elif 'sh' in match[0]:
+        is_python = False
+    else:
+        if '!pip install ' in match[1]:
+            is_python = True
+        elif 'pip install ' in match[1]:
+            is_python = False
+        else:
+            log('Unable to identify code language')
+            is_python = True
+    return is_python
+
+
 class VirtualEnvironment:
     def __init__(self, venv_path='venv4gen'):
         self.venv_path = venv_path
@@ -140,7 +156,7 @@ class VirtualEnvironment:
             self.python_executable = "python"
             self.pip_executable = "pip"
 
-    def _run_sh(self, command):
+    def _run_cmd(self, command):
         replacements = {
             "python": self.python_executable,
             "pip": self.pip_executable,
@@ -162,19 +178,19 @@ class VirtualEnvironment:
             output = str(error.stdout.decode()).strip()
         return output
     
-    def _run_py(self, code_string, script_name="script.py"):
-        lines_with_exclamation = re.findall(r'^!(.*)$', code_string, re.MULTILINE)
+    def _run(self, code_string, script_name="script.py"):
+        code_string = code_string.rstrip()
+        ls = re.findall(r'^!(.*)$', code_string, re.MULTILINE)
         code_string = re.sub(r'^(!)', r'#\1', code_string, flags=re.MULTILINE)
         with open(script_name, 'w') as f:
             f.write(code_string)
-        lines_with_exclamation.append(f"python {script_name}")
-        return '\n' +  '\n'.join([self._run_sh(s) for s in lines_with_exclamation]) + '\n'
+        ls.append(f"python {script_name}")
+        return '\n'.join([self._run_cmd(s) for s in ls]).rstrip()
     
-    def execute(self, code_string, is_python=True):
-        # code_string = extract_code_block(code_string)
-        if is_python is True:
-            return self._run_py(code_string)
-        return '\n' + '\n'.join([self._run_sh(s) for s in code_string.splitlines()]) + '\n'
+    def execute(self, s, is_python=None):
+        code_input = extract_code_block(s, is_python)
+        code_output = self._run(code_input)
+        return f'[Code]:\n```python\n{code_input}\n```\n\n[Output]:\n```\n{code_output}\n```\n'
         
 class RM:
     def __init__(self, configs=default_config_for_RM, model_id="BAAI/bge-small-en", query_instruction='Represent this sentence for searching relevant passages: '):
@@ -252,11 +268,12 @@ class LM:
         fn_to_save = os.path.join(self.default_cwd, cache_fn)
         fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
         prohibits = prohibits if prohibits else self.default_prohibits 
-        beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None)]
         max_new_tokens, required_tokens = constraint
         required_tokens_pt = [torch.tensor(i).unsqueeze(0).to(self.model.device) for i in required_tokens]
         unique_heads, inverse_indices = torch.unique(torch.tensor([i[0] for i in required_tokens]), return_inverse=True)
         unique_heads = unique_heads.to(self.model.device)
+        adhoc = max(len(i) for i in required_tokens)
+        beams = [(input_beam[0].to(self.model.device), input_beam[1][-adhoc:], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None)]
         best_postfixed = (None, None, float('-inf'), None)
         best_compatibility = float('-inf')
         for i in range(max_new_tokens):
@@ -295,10 +312,10 @@ class LM:
                             best_voluntary = new_beam
             if best_voluntary[2] >= new_beams[-1][2]:
                 torch.save(best_voluntary[-1], fn_to_save)
-                return (*best_voluntary[:-1], cache_fn)
+                return (best_voluntary[0], best_voluntary[1][adhoc:], best_voluntary[2], cache_fn)
             beams = new_beams
         torch.save(best_postfixed[-1], fn_to_save)
-        return (*best_postfixed[:-1], cache_fn)
+        return (best_postfixed[0], best_postfixed[1][adhoc:], best_postfixed[2], cache_fn)
     
     @torch.no_grad()
     def _unconstrained_beam(self, input_beam, max_new_tokens, prohibits, num_beams, cache_fn, norm_factor = .0, patience_limit = 10):
@@ -339,7 +356,7 @@ class LM:
         torch.save(result[-1], fn_to_save)
         return (*result[:-1], cache_fn)
     
-    def _get_constraints(self, template, default_padding=20, default_interval=500):
+    def _get_constraints(self, template, default_padding=5, default_interval=500):
         def tokenize_constraints(s):
             if len(s) < 1:
                 return []
@@ -377,7 +394,8 @@ class LM:
     @torch.no_grad()
     def generate(self, input_txt, template = (('\n```python', '\n```sh'), '\n```'), constraints = None, prohibits = None, num_beams = 3, cache_fn = 'kv'):
         os.remove(cache_fn) if os.path.exists(cache_fn) else None
-        i_beam = (self.tokenizer(input_txt, add_special_tokens=True, return_tensors='pt').input_ids, None, None, None)
+        input_ids = self.tokenizer(input_txt, add_special_tokens=True, return_tensors='pt').input_ids
+        i_beam = (input_ids, input_ids.squeeze(0).tolist(), None, None)
         result = []
         constraints = self._get_constraints(template) if constraints is None else constraints
         for constraint in constraints:
@@ -390,14 +408,14 @@ class LM:
                 i_beam = self._constrained_beam(i_beam, constraint = constraint, prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
                 torch.cuda.empty_cache()
                 result += i_beam[1]
-        return extract_code_block(self.tokenizer.decode(result))
+        return self.tokenizer.decode(result)
     
 class Roy:
     def __init__(self, config=None):
         if config is None:
             config = {}
             
-        self.template = config.get('template', "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Response:")
+        self.template = config.get('template', "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Response:\n")
         
         self._venv = None
         self._lm = None
@@ -427,8 +445,10 @@ class Roy:
 
     @trace_method
     def format(self, instruction, data={}):
-        template = self.template.format(instruction=instruction)
-        if isinstance(data, pd.DataFrame):
+        template = self.template.format(instruction=instruction.rstrip())
+        if len(data) < 1:
+            return template
+        elif isinstance(data, pd.DataFrame):
             return data.apply(lambda row: template.format(**row), axis=1).tolist()
         elif isinstance(data, (dict, pd.Series)):
             return template.format(**data)
