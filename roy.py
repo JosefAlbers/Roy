@@ -38,24 +38,14 @@ def trace_method(func):
         return result
     return wrapper
         
-def truncate_string(row, char_limit, variable_str, constant_str):
-    if not (isinstance(row[variable_str], str) and isinstance(row[constant_str], str)):
-        return ""
-    if len(row[constant_str]) >= char_limit:
-        return ""
-    trimmed_length = char_limit - len(row[constant_str])
-    return row[variable_str][:trimmed_length]
-
 def process_code_string(s):
     if '>>>' not in s:
         return s
-
     def replace_line_prefix(match):
         prefix = match.group(1)
         if prefix in [">>> ", "... "]:
             return ""
         return "# " + match.group(0)
-    
     pattern = r"^(>>> |... |\S+.*$)"
     return re.sub(pattern, replace_line_prefix, s, flags=re.MULTILINE)
 
@@ -69,7 +59,7 @@ def extract_code_block(s, is_python):
     code = ''
     for match in matches:
         is_python = identify_lang(match) if is_python is None else is_python
-        code += match[1] if is_python else re.sub(r'(?<!!)^', '!', match[1], flags=re.MULTILINE)
+        code += match[1] if is_python else re.sub(r'^(?![!])', '!', match[1], flags=re.MULTILINE)
     return code.rstrip()
 
 def process_markdown_data(df):
@@ -80,6 +70,13 @@ def process_markdown_data(df):
     return df
 
 def process_docstr_data(df):
+    def truncate_string(row, char_limit, variable_str, constant_str):
+        if not (isinstance(row[variable_str], str) and isinstance(row[constant_str], str)):
+            return ""
+        if len(row[constant_str]) >= char_limit:
+            return ""
+        trimmed_length = char_limit - len(row[constant_str])
+        return row[variable_str][:trimmed_length]
     df = df[df['docstring'].str.contains('```')]
     df = df[~df['filepath'].apply(lambda x: x.split('/')[-1]).str.startswith('TF')]
     df.reset_index(drop=True, inplace=True)
@@ -89,28 +86,6 @@ def process_docstr_data(df):
     df['docstring'] = df.apply(truncate_string, args=(5000,'docstring','retrieved_code'), axis=1)
     df['retrieved_docstr'] = df.apply(lambda row: f"{row['type']} `{row['filepath'].split('/')[-1]}` ({row['filepath']}):\n'''\n{row['docstring']}...\n'''", axis=1)
     return df
-
-
-def edit_code_in_terminal(initial_text):
-    kb = KeyBindings()
-    result = {'text': initial_text}
-
-    @kb.add('s-tab')
-    def _(event):
-        result['text'] = event.app.current_buffer.text
-        event.app.exit()
-
-    style = Style.from_dict({
-        '': '#ffad00',
-        'prompt': 'bg:#ff0000 #ffff00',
-    })
-
-    session = PromptSession(lexer=PygmentsLexer(Python3Lexer), key_bindings=kb, style=style)
-    session.prompt('\n--- Press shift+tab when done ---\n', multiline=True, default=initial_text)
-    
-    result_text = result['text']
-
-    return result_text
 
 default_config_for_RM = {
     'markdown': {
@@ -122,6 +97,22 @@ default_config_for_RM = {
         'process_data': process_docstr_data
     },
 }
+
+def edit_code_in_terminal(initial_text):
+    kb = KeyBindings()
+    result = {'text': initial_text}
+    @kb.add('s-tab')
+    def _(event):
+        result['text'] = event.app.current_buffer.text
+        event.app.exit()
+    style = Style.from_dict({
+        '': '#ffad00',
+        'prompt': 'bg:#ff0000 #ffff00',
+    })
+    session = PromptSession(lexer=PygmentsLexer(Python3Lexer), key_bindings=kb, style=style)
+    session.prompt('\n--- Press shift+tab when done ---\n', multiline=True, default=initial_text)
+    result_text = result['text']
+    return result_text
 
 def identify_lang(match): # stub
     if 'py' in match[0]:
@@ -138,9 +129,8 @@ def identify_lang(match): # stub
             is_python = True
     return is_python
 
-
 class VirtualEnvironment:
-    def __init__(self, venv_path='venv4gen'):
+    def __init__(self, venv_path='venvRoy'):
         self.venv_path = venv_path
         try:
             if not os.path.exists(self.venv_path):
@@ -151,6 +141,8 @@ class VirtualEnvironment:
             else:
                 self.python_executable = os.path.join(venv_path, "bin", "python")
                 self.pip_executable = os.path.join(venv_path, "bin", "pip")
+            subprocess.run(f'{self.python_executable} -V')
+            subprocess.run(f'{self.pip_executable} -V')
         except:
             log("Warning: Failed to create or locate virtual environment. Using default system python and pip.")
             self.python_executable = "python"
@@ -277,7 +269,6 @@ class LM:
         best_postfixed = (None, None, float('-inf'), None)
         best_compatibility = float('-inf')
         for i in range(max_new_tokens):
-            best_voluntary = (None, None, float('-inf'), None)
             new_beams = []
             for beam in beams:
                 beam_input_ids, beam_output_tokens, beam_score, beam_kv = beam
@@ -302,17 +293,14 @@ class LM:
                     new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
                     new_output_tokens = beam_output_tokens + [next_token_id.item()]
                     new_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + next_score.item()) / (len(new_output_tokens) + norm_factor)
-                    if next_token_id == self.tokenizer.eos_token_id:
-                        continue
-                    elif all(new_output_tokens[-len(p):] != p for p in prohibits):
+                    if all(new_output_tokens[-len(p):] != p for p in prohibits) and (next_token_id != self.tokenizer.eos_token_id):
                         new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
                         new_beams.append(new_beam)
                         new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
-                        if any(new_output_tokens[-len(sublist):] == sublist for sublist in required_tokens) and (new_score > best_voluntary[2]):
-                            best_voluntary = new_beam
-            if best_voluntary[2] >= new_beams[-1][2]:
-                torch.save(best_voluntary[-1], fn_to_save)
-                return (best_voluntary[0], best_voluntary[1][adhoc:], best_voluntary[2], cache_fn)
+            for new_beam in new_beams:
+                if any(new_beam[1][-len(sublist):] == sublist for sublist in required_tokens):
+                    torch.save(new_beam[-1], fn_to_save)
+                    return (new_beam[0], new_beam[1][adhoc:], new_beam[2], cache_fn)
             beams = new_beams
         torch.save(best_postfixed[-1], fn_to_save)
         return (best_postfixed[0], best_postfixed[1][adhoc:], best_postfixed[2], cache_fn)
@@ -337,19 +325,15 @@ class LM:
                 new_logits = new_outputs.logits[:, -1, :]
                 new_kv = new_outputs.past_key_values
                 topk = torch.topk(new_logits, num_beams)
-                list_next_token_id = topk.indices[0]
-                list_next_score = topk.values[0]
-                if (self.tokenizer.eos_token_id in list_next_token_id) and (new_score > best_eos[2]):
-                    best_eos = beam
-                    patience = patience_limit
-                    continue
-                for next_token_id, next_score in zip(list_next_token_id, list_next_score):
+                for next_token_id, next_score in zip(topk.indices[0], topk.values[0]):
                     new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
                     new_output_tokens = beam_output_tokens + [next_token_id.item()]
                     new_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + next_score.item()) / (len(new_output_tokens) + norm_factor)
-                    if all(new_output_tokens[-len(p):] != p for p in prohibits):
-                        new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
-                        new_beams.append(new_beam)
+                    if (next_token_id == self.tokenizer.eos_token_id) and (new_score > best_eos[2]):
+                        best_eos = beam
+                        patience = patience_limit
+                    elif all(new_output_tokens[-len(p):] != p for p in prohibits):
+                        new_beams.append((new_input_ids, new_output_tokens, new_score, new_kv))
                         new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
             beams = new_beams
         result = max([best_eos] + beams, key=lambda x:x[2])
@@ -366,7 +350,6 @@ class LM:
             input_ids = [sub[1:] if sub and sub[0] == 29871 else sub for sub in input_ids]
             input_ids[len(s):] = [i[1:] for i in input_ids[len(s):]]
             return [list(x) for x in set(tuple(x) for x in input_ids)]
-        
         if len(template) == 1:
             if isinstance(template[0], int):
                 return [(template[0], None)]
@@ -403,7 +386,6 @@ class LM:
                 i_beam = self._unconstrained_beam(i_beam, max_new_tokens = constraint[0], prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
                 torch.cuda.empty_cache()
                 result += i_beam[1]
-                
             else:
                 i_beam = self._constrained_beam(i_beam, constraint = constraint, prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
                 torch.cuda.empty_cache()
@@ -414,13 +396,10 @@ class Roy:
     def __init__(self, config=None):
         if config is None:
             config = {}
-            
         self.template = config.get('template', "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Response:\n")
-        
         self._venv = None
         self._lm = None
         self._rm = None
-
         self.execute = trace_method(config.get('execute', self.venv.execute))
         self.generate = trace_method(config.get('generate', self.lm.generate))
         self.retrieve = trace_method(config.get('retrieve', self.rm.retrieve))
