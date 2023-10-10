@@ -28,16 +28,20 @@ def log(s, log_level=5):
 
 def trace_method(func):
     def wrapper(*args, **kwargs):
-        input_str = args[0] if isinstance(args[0], str) else args[1]
-        log(f"{func.__name__}() receives:\n{indent(input_str, '    ')}", 2)
+        # input_str = args[0] if isinstance(args[0], str) else type(args[1])
+        input_str = '\n'.join(i for i in args if isinstance(i, str))
+        log(f"{func.__name__}() receives:\n{indent(input_str, '    ')}", 3)
         result = func(*args, **kwargs)
         if isinstance(result, str):
-            log(f"{func.__name__}() returns:\n{indent(result, '    ')}", 1)
+            log(f"{func.__name__}() returns:\n{indent(result, '    ')}", 2)
+        elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], str):
+            _result = '\n'.join(result)
+            log(f"{func.__name__}() returns:\n: {indent(_result, '    ')}", 2)
         else:
-            log(f"{func.__name__}() returns an object of type: {type(result)}", 1)
+            log(f"{func.__name__}() returns an object of type: {type(result)}", 2)
         return result
     return wrapper
-        
+
 def process_code_string(s):
     if '>>>' not in s:
         return s
@@ -169,7 +173,7 @@ class VirtualEnvironment:
         except subprocess.CalledProcessError as error:
             output = str(error.stdout.decode()).strip()
         return output
-    
+
     def _run(self, code_string, script_name="script.py"):
         code_string = code_string.rstrip()
         ls = re.findall(r'^!(.*)$', code_string, re.MULTILINE)
@@ -178,12 +182,12 @@ class VirtualEnvironment:
             f.write(code_string)
         ls.append(f"python {script_name}")
         return '\n'.join([self._run_cmd(s) for s in ls]).rstrip()
-    
-    def execute(self, s, is_python=None):
-        code_input = extract_code_block(s, is_python)
-        code_output = self._run(code_input)
-        return f'[Code]:\n```python\n{code_input}\n```\n\n[Output]:\n```\n{code_output}\n```\n'
-        
+
+    def execute(self, s, is_python=None, template='[Code]:\n```python\n{x_in}\n```\n\n[Output]:\n```\n{x_out}\n```\n'):
+        x_in = extract_code_block(s, is_python)
+        x_out = self._run(x_in)
+        return template.format(x_in=x_in, x_out=x_out)
+
 class RM:
     def __init__(self, configs=default_config_for_RM, model_id="BAAI/bge-small-en", query_instruction='Represent this sentence for searching relevant passages: '):
         self.configs = configs
@@ -191,7 +195,7 @@ class RM:
         for src, config in self.configs.items():
             self._init_filenames(src)
             self._load_resources(src)
-        self._init_model(model_id, query_instruction) 
+        self._init_model(model_id, query_instruction)
 
     def _init_filenames(self, src):
         config = self.configs[src]
@@ -222,7 +226,7 @@ class RM:
         self.device = torch.device('cpu')
         self.model.to(self.device)
         self.model.eval()
-        
+
     @torch.no_grad()
     def _encode_queries(self, queries):
         query_formatted = [self.QUERY_INST + queries] if isinstance(queries, str) else ['{}{}'.format(self.QUERY_INST, q) for q in queries]
@@ -231,8 +235,8 @@ class RM:
         embeddings = last_hidden_states[:, 0, :]
         embeddings = torch.nn.functional.normalize(embeddings, dim=-1)
         return embeddings.cpu().numpy()
-    
-    def retrieve(self, user_request, n_topk=3, src='huggingface'):
+
+    def retrieve(self, user_request, n_topk=3, src='huggingface', template='Modify the code below to solve this problem: {user_request}\n```python\n{retrieved_code}\n```'):
         config = self.configs[src]
         res = self.resources[src]
         index = res["index"]
@@ -245,7 +249,10 @@ class RM:
             df_topk = process_func(df_topk)
         df_topk = df_topk.iloc[:n_topk]
         df_topk['user_request'] = user_request
-        return df_topk.reset_index(drop=True)
+        # return df_topk.reset_index(drop=True)
+        ls_topk = df_topk.apply(lambda row: template.format(**row), axis=1).tolist()
+        return ls_topk
+
 
 class LM:
     def __init__(self, model_id = 'TheBloke/WizardCoder-Python-7B-V1.0-GPTQ'):
@@ -259,7 +266,7 @@ class LM:
     def _constrained_beam(self, input_beam, constraint, prohibits, num_beams, cache_fn, norm_factor = .0):
         fn_to_save = os.path.join(self.default_cwd, cache_fn)
         fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
-        prohibits = prohibits if prohibits else self.default_prohibits 
+        prohibits = prohibits if prohibits else self.default_prohibits
         max_new_tokens, required_tokens = constraint
         required_tokens_pt = [torch.tensor(i).unsqueeze(0).to(self.model.device) for i in required_tokens]
         unique_heads, inverse_indices = torch.unique(torch.tensor([i[0] for i in required_tokens]), return_inverse=True)
@@ -304,12 +311,12 @@ class LM:
             beams = new_beams
         torch.save(best_postfixed[-1], fn_to_save)
         return (best_postfixed[0], best_postfixed[1][adhoc:], best_postfixed[2], cache_fn)
-    
+
     @torch.no_grad()
     def _unconstrained_beam(self, input_beam, max_new_tokens, prohibits, num_beams, cache_fn, norm_factor = .0, patience_limit = 10):
         fn_to_save = os.path.join(self.default_cwd, cache_fn)
         fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
-        prohibits = prohibits if prohibits else self.default_prohibits 
+        prohibits = prohibits if prohibits else self.default_prohibits
         beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None )]
         best_eos = (None, None, float('-inf'), None)
         patience = float('inf')
@@ -339,7 +346,7 @@ class LM:
         result = max([best_eos] + beams, key=lambda x:x[2])
         torch.save(result[-1], fn_to_save)
         return (*result[:-1], cache_fn)
-    
+
     def _get_constraints(self, template, default_padding=5, default_interval=500):
         def tokenize_constraints(s):
             if len(s) < 1:
@@ -373,7 +380,7 @@ class LM:
         assert len(fixed_template) % 2 == 0
         constraints = [(fixed_template[i], tokenize_constraints(fixed_template[i+1])) for i in range(0, len(fixed_template), 2)]
         return constraints
-    
+
     @torch.no_grad()
     def generate(self, input_txt, template = (('\n```python', '\n```sh'), '\n```'), constraints = None, prohibits = None, num_beams = 3, cache_fn = 'kv'):
         os.remove(cache_fn) if os.path.exists(cache_fn) else None
@@ -391,7 +398,7 @@ class LM:
                 torch.cuda.empty_cache()
                 result += i_beam[1]
         return self.tokenizer.decode(result)
-    
+
 class Roy:
     def __init__(self, config=None):
         if config is None:
@@ -433,3 +440,46 @@ class Roy:
             return template.format(**data)
         else:
             raise ValueError("Unsupported data type. Data must be a dict, Series, or DataFrame.")
+
+class Roys(Roy):
+    def create(self, agents, tools=None):
+        df_agents = pd.DataFrame(agents.items(), columns=['name', 'signature'])
+        df_agents['chopchop'] = df_agents['signature'].apply(lambda x: [item.strip() for item in re.split(r'[=()]', x) if item.strip()])
+        df_agents['in'] = df_agents['chopchop'].apply(lambda x: x[-1] if x else None)
+        df_agents['to'] = df_agents['chopchop'].apply(lambda x: x[0] if x else None)
+        df_agents['fxn'] = df_agents['chopchop'].apply(lambda x: x[1:-1] if x else None)
+        df_agents = df_agents.drop(columns = ['chopchop'])
+        self.df_agents = df_agents
+        if tools is not None:
+            for key, value in tools.items():
+                setattr(self, key, trace_method(value))
+
+    def _map_fxn(self, ls_fxn, ls_i):
+        ls_i = [ls_i] if isinstance(ls_i, str) else ls_i
+        ls_o = []
+        for i in ls_i:
+            t = i
+            for f in ls_fxn[::-1]:
+                t = getattr(self, f)(t)
+            if isinstance(t, list):
+                ls_o.extend(t)
+            elif isinstance(t, str):
+                ls_o.append(t)
+            else:
+                continue
+        return ls_o
+
+    def start(self, requests):
+        self.dict_cache = {key: [value] if isinstance(value, str) else value for key, value in requests.items()}
+        for turn in range(2):
+            log(f'Turn {turn}', 1)
+            for _, row_agent in self.df_agents.iterrows():
+                key_i = row_agent['in']
+                key_o = row_agent['to']
+                ls_fxn = row_agent['fxn']
+                if key_i in self.dict_cache.keys():
+                    agent_output = self._map_fxn(ls_fxn, self.dict_cache[key_i])
+                    self.dict_cache[key_o] = agent_output
+                    _log = '\n'.join(agent_output)
+                    log(f"<<<{row_agent['name']}>>>: {_log}", 0)
+        return self.dict_cache

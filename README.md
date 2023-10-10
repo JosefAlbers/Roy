@@ -3,15 +3,15 @@
 [<img src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/JosefAlbers/Roy/blob/main/quickstart.ipynb)
 [![DOI](https://zenodo.org/badge/699801819.svg)](https://zenodo.org/badge/latestdoi/699801819)
 
-Roy is a lightweight alternative to `autogen`, for crafting advanced multi-agent systems using language models.
+Roy is a lightweight alternative to `autogen`, for developing advanced multi-agent systems using language models. It redefines the paradigm of LLM application development, emphasizing simplicity, versatility, and transparency.
 
 ## Features
 
-- Flexibility: Roy is model-agnostic, eliminating the need for external API keys. By default, it employs the 4-bit quantized wizard-coder-python, but you can swap it out for any LLM of your choice.
+- **Model-agnostic**: Roy can be used with any language model, eliminating the need for external API keys. By default, it employs the 4-bit quantized wizard-coder-python, but you can swap it out for any LLM of your choice.
 
-- Composability: Roy refines the LLM interactions into modular, adaptable operations, each of which can be used in isolation or composed in myriad ways to create sophisticated workflows.
+- **Modular and composable**: Roy refines LLM interactions into modular, adaptable operations that can be used in isolation or composed in myriad ways to create sophisticated workflows.
 
-- Clarity: Opposed to frameworks that entangle operations behind multiple layers, Roy is transparent. Each method serves a distinct purpose, for instance, granting users complete oversight and control over the process.
+- **Transparent**: Opposed to frameworks that entangle operations behind multiple layers, Roy is transparent. Each method serves a distinct purpose, for instance, granting users complete oversight and control over the process.
 
 ## Quickstart
 
@@ -27,17 +27,12 @@ from roy import Roy
 roy = Roy()
 ```
 
-### **Template-Based Generation**
+### **Template-Based Generation with Constrained Beam Search**
 
 ```python
 s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?\n'
 s = roy.format(s)
 roy.generate(s)
-```
-
-### **Constrained Generation**
-
-```python
 roy.generate(s, ('```python', '```'))                    # Generate a python code block
 roy.generate(s, (('```python', '```javascript'), '```')) # Generate python or javascript codes
 roy.generate(s, ('```python', 100, '```'))               # Generate a code block of size less than 100 tokens
@@ -45,29 +40,31 @@ roy.generate(s, ('```python', 100, '```'))               # Generate a code block
 
 ### **Retrieval Augmented Generation**
 
+Agents can retrieve and leverage relevant information from external sources, enhancing their knowledge and capabilities.
+
 ```python
 s = 'Create a text to image generator.\n'
 r = roy.retrieve(s, n_topk=3, src='huggingface')
-r = roy.format('Modify the [Example Code] to fulfill the [User Request] using minimal changes. Keep the modifications minimal by making only the necessary modifications.\n\n[User Request]:\n"{user_request}"\n\n[Context]:\n{retrieved_docstr}\n\n[Example Code]:\n```python\n{retrieved_code}\n```', r)
 [roy.generate(s) for s in r]
 ```
 
-### **Auto Feedback**
+### **Auto-Feedback**
+
+Agents autonomously generate and execute feedback on each other's outputs, leading to continuous improvement and refinement.
 
 ```python
 s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection.\n"
-
-for i in range(3):
+for i in range(2):
     c = roy.generate(s)
     s += roy.execute(c)
 ```
 
-### **Auto Grind**
+### **Auto-Grinding**
 
 ```python
 user_request = "Compare the year-to-date gain for META and TESLA.\n"
 ai_response = roy.generate(user_request)
-for i in range(3):
+for i in range(2):
     shell_execution = roy.execute(ai_response)
     if 'ModuleNotFoundError' in shell_execution:
         roy.execute(roy.generate(roy.format(f'Write a shell command to address the error encountered while running this Python code:\n\n{shell_execution}')), False)
@@ -77,16 +74,66 @@ for i in range(3):
         break
 ```
 
+### **Multi-Agent**
+
+Roy supports the creation of dynamic multi-agent systems:
+
+```python
+from roy import Roy
+roys = Roys()
+
+# AutoFeedback
+roys.create(agents = {'Coder': 'i = execute(generate(i))'})
+roys.start(requests = {'i': 'Create a mobile application that can track the health of elderly people living alone in rural areas.\n'})
+
+# Retrieval Augmented Generation
+roys.create(
+    agents = {
+        'Retriever': 'r = retrieve(i)',
+        'Generator': 'o = generate(r)',
+        })
+roys.start(requests = {'i': 'Create a Deutsch to English translator.\n'})
+
+# Providing a custom tool to one of the agents using lambda
+roys.create(
+    agents = {
+        'Coder': 'c = generate(i)',
+        'Proxy': 'c = custom(execute(c))',
+        },
+    tools = {'custom': lambda x:f'Modify the code to address the error encountered:\n\n{x}' if 'Error' in x else None})
+roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.\n'})
+
+# Another way to create a custom tool for agents
+def custom_switch(c):
+    py_str = 'Modify the code to address the error encountered:\n\n'
+    sh_str = 'Write a shell command to address the error encountered while running this Python code:\n\n'
+    x = roys.execute(c)
+    if 'ModuleNotFoundError' in x:
+        roys.execute(roys.generate(sh_str+x))
+        roys.dict_cache['c'] = [c]
+    elif 'Error' in x:
+        roys.dict_cache['i'] = [py_str+x]
+    return 'Success:\n\n'+x
+    
+roys.create(
+    agents = {
+        'Coder': 'c = generate(i)',
+        'Proxy': '_ = protocol(c)',
+        },
+    tools = {'protocol': custom_switch})
+roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.\n'})
+```
+
 ## Self-Organizing Multi-Agent System
 
-Envision a dynamic group chat where agents, each bearing distinct roles and defined by its unique constraints, affinities, and behaviors, converge to collaborates towards a predefined objective. This opens up a realm of possibilities, from brainstorming sessions to problem-solving think tanks. Drawing inspiration from biology and machine learning, Roy aspires to pioneer a perpetually evolving multi-agent environment.
+Envision a dynamic group chat where agents, each bearing distinct roles and defined by its unique constraints, affinities, and behaviors, converge to collaborate towards a predefined objective. This opens up a realm of possibilities, from brainstorming sessions to problem-solving think tanks. Drawing inspiration from biology and machine learning, Roy aspires to pioneer a perpetually evolving multi-agent environment.
 
 ### Survival of the Fittest
 
 Guided by the tenets of natural selection, this principle ensures the survival of only the most adept agents:
 
 - **Fitness Metrics**: Evaluate agents based on information quality, response speed, relevance, and feedback.
-  
+
 - **Agent Evaluation**: Periodically assess agent performance.
   
 - **Agent Reproduction**: Allow top-performing agents to spawn new ones with similar attributes.
@@ -128,4 +175,3 @@ For those who've made it this far, I believe you share my passion. Dive into Roy
 If you found this project helpful or interesting and want to support more of these experiments, feel free to buy me a coffee!
 
 <a href="https://www.buymeacoffee.com/albersj66a" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="25" width="100"></a>
-
