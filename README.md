@@ -79,7 +79,7 @@ for i in range(2):
 Roy supports the creation of dynamic multi-agent systems:
 
 ```python
-from roy import Roy
+from roy import Roys
 roys = Roys()
 
 # AutoFeedback
