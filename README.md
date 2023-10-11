@@ -3,15 +3,15 @@
 [<img src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/JosefAlbers/Roy/blob/main/quickstart.ipynb)
 [![DOI](https://zenodo.org/badge/699801819.svg)](https://zenodo.org/badge/latestdoi/699801819)
 
-Roy is a lightweight alternative to `autogen`, for developing advanced multi-agent systems using language models. It redefines the paradigm of LLM application development, emphasizing simplicity, versatility, and transparency.
+Roy is a lightweight alternative to `autogen`, for developing advanced multi-agent systems using language models. It aims to simplify and democratize the development of emergent collective intelligence.
 
 ## Features
 
-- **Model-agnostic**: Roy can be used with any language model, eliminating the need for external API keys. By default, it employs the 4-bit quantized wizard-coder-python, but you can swap it out for any LLM of your choice.
+- **Model Agnostic**: Use any LLM, no external APIs required. Defaults to a 4-bit quantized wizard-coder-python model for efficiency.
 
-- **Modular and composable**: Roy refines LLM interactions into modular, adaptable operations that can be used in isolation or composed in myriad ways to create sophisticated workflows.
+- **Modular and Composable**: Roy decomposes agent interactions into reusable building blocks - templating, retrieving, generating, executing.
 
-- **Transparent**: Opposed to frameworks that entangle operations behind multiple layers, Roy is transparent. Each method serves a distinct purpose, for instance, granting users complete oversight and control over the process.
+- **Transparent and Customizable**: Every method has a clear purpose. Easily swap out components or add new capabilities.
 
 ## Quickstart
 
@@ -27,12 +27,20 @@ from roy import Roy
 roy = Roy()
 ```
 
-### **Template-Based Generation with Constrained Beam Search**
+### **Template-Based Generation**
+
+Use templates to structure conversations and provide context.
 
 ```python
 s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?\n'
-s = roy.format(s)
-roy.generate(s)
+roy.generate(roy.format(s))
+```
+
+### **Constrained Beam Search**
+
+Control output length, format, etc.
+
+```python
 roy.generate(s, ('```python', '```'))                    # Generate a python code block
 roy.generate(s, (('```python', '```javascript'), '```')) # Generate python or javascript codes
 roy.generate(s, ('```python', 100, '```'))               # Generate a code block of size less than 100 tokens
@@ -40,7 +48,7 @@ roy.generate(s, ('```python', 100, '```'))               # Generate a code block
 
 ### **Retrieval Augmented Generation**
 
-Agents can retrieve and leverage relevant information from external sources, enhancing their knowledge and capabilities.
+Enhance generation with relevant knowledge.
 
 ```python
 s = 'Create a text to image generator.\n'
@@ -50,7 +58,7 @@ r = roy.retrieve(s, n_topk=3, src='huggingface')
 
 ### **Auto-Feedback**
 
-Agents autonomously generate and execute feedback on each other's outputs, leading to continuous improvement and refinement.
+Agents recursively improve via critiquing each other.
 
 ```python
 s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection.\n"
@@ -76,7 +84,7 @@ for i in range(2):
 
 ### **Multi-Agent**
 
-Roy supports the creation of dynamic multi-agent systems:
+Flexible primitives to build ecosystems of agents.
 
 ```python
 from roy import Roys
