@@ -69,6 +69,8 @@ for i in range(2):
 
 ### **Auto-Grinding**
 
+Agents collaborate in tight loops to iteratively refine outputs to specification.
+
 ```python
 user_request = "Compare the year-to-date gain for META and TESLA.\n"
 ai_response = roy.generate(user_request)
@@ -132,53 +134,21 @@ roys.create(
 roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.\n'})
 ```
 
-## Self-Organizing Multi-Agent System
+## Emergent Multi-Agent Dynamics
 
-Envision a dynamic group chat where agents, each bearing distinct roles and defined by its unique constraints, affinities, and behaviors, converge to collaborate towards a predefined objective. This opens up a realm of possibilities, from brainstorming sessions to problem-solving think tanks. Drawing inspiration from biology and machine learning, Roy aspires to pioneer a perpetually evolving multi-agent environment.
+Roy aims to facilitate the emergence of complex, adaptive multi-agent systems. It draws inspiration from biological and AI concepts to enable decentralized coordination and continual learning.
 
-### Survival of the Fittest
+- **Survival of the Fittest** - Periodically evaluate and selectively retain high-performing agents based on accuracy, speed etc. Agents adapt through peer interactions.
 
-Guided by the tenets of natural selection, this principle ensures the survival of only the most adept agents:
+- **Mixture of Experts** - Designate agent expertise, dynamically assemble specialist teams, and route tasks to optimal experts. Continuously refine and augment experts. 
 
-- **Fitness Metrics**: Evaluate agents based on information quality, response speed, relevance, and feedback.
+These mechanisms facilitate the emergence of capable, adaptive, and efficient agent collectives.
 
-- **Agent Evaluation**: Periodically assess agent performance.
-  
-- **Agent Reproduction**: Allow top-performing agents to spawn new ones with similar attributes.
-  
-- **Agent Removal**: Phase out underperformers to uphold quality.
-  
-- **Adaptive Learning**: Agents evolve through their interactions.
-  
-- **Dynamic Environment**: The chat setting adapts, pushing agents to be resilient and versatile.
+## Get Involved
 
-### Mixture of Experts
+Roy is under active development. We welcome contributions - feel free to open issues and PRs!
 
-This principle promotes efficiency by allocating tasks to the most qualified agents:
-
-- **Expertise Definition**: Designate areas of expertise for each agent.
-  
-- **Dynamic Collaboration**: Align relevant agents to address specific tasks.
-  
-- **Expert Evaluation**: Constantly gauge the performance of expert agents.
-  
-- **Expert Refinement**: Retrain, adjust, or replace underperforming experts.
-  
-- **Learning from Peers**: Agents expand their knowledge horizons by learning from others.
-  
-- **Task Routing**: Route tasks to the best-suited experts.
-  
-- **Layered Expertise**: Deploy coordinators to guide collaborations for intricate tasks.
-  
-- **Human Expert Integration**: Infuse human knowledge into the chat, amplifying collective intelligence.
-
-By utilizing these principles, our self-organizing chat group remains in a state of perpetual evolution, always questing for the zenith of outcomes and ongoing enhancement.
-
-## Conclusion
-
-Roy redefines the paradigm of LLM application development, emphasizing simplicity, versatility, and transparency. Whether your aim is a basic LLM interaction or an elaborate multi-agent system, Roy provides the architecture to realize it.
-
-For those who've made it this far, I believe you share my passion. Dive into Roy, discover its potential, and join me in exploring the future of LLM applications.
+## Support the Project
 
 If you found this project helpful or interesting and want to support more of these experiments, feel free to buy me a coffee!
 
