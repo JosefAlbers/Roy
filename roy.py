@@ -7,6 +7,7 @@ from transformers import AutoModelForCausalLM, AutoModel, AutoTokenizer
 from huggingface_hub import hf_hub_download
 import faiss
 import pandas as pd
+import numpy as np
 from textwrap import indent, dedent
 import re
 import subprocess
@@ -19,26 +20,37 @@ from prompt_toolkit.styles import Style
 from pygments.lexers.python import Python3Lexer
 import argparse
 from tqdm.auto import tqdm
+from inspect import getsource
+from io import StringIO
+from datetime import datetime, timedelta
 
+log_buffer = StringIO()
 LOG_LEVEL = 5
+
+def get_timestamp():
+    dt = datetime.utcnow() + timedelta(hours=9)
+    return dt.strftime('%Y%m%d%H%M%S')
+
 
 def log(s, log_level=5):
     if log_level < LOG_LEVEL+1:
-        print(f'\033[{31+log_level}m{s}\033[0m')
+        log_message = f'\n{get_timestamp()}\n\033[{31+log_level}m\n{s}\n\033[0m\n'
+        print(log_message)
+        log_buffer.write(log_message)
+
+def dump_log(log_file="log.txt"):
+    with open(log_file, "a") as file:
+        file.write(log_buffer.getvalue())
+    log_buffer.truncate(0)
+    return log_file
 
 def trace_method(func):
     def wrapper(*args, **kwargs):
-        # input_str = args[0] if isinstance(args[0], str) else type(args[1])
-        input_str = '\n'.join(i for i in args if isinstance(i, str))
-        log(f"{func.__name__}() receives:\n{indent(input_str, '    ')}", 3)
         result = func(*args, **kwargs)
-        if isinstance(result, str):
-            log(f"{func.__name__}() returns:\n{indent(result, '    ')}", 2)
-        elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], str):
-            _result = '\n'.join(result)
-            log(f"{func.__name__}() returns:\n: {indent(_result, '    ')}", 2)
-        else:
-            log(f"{func.__name__}() returns an object of type: {type(result)}", 2)
+        log_in = '\n'.join(str(i) for i in args)
+        log(f"{func.__name__}() receives:\n{indent(log_in, '    ')}", 3)
+        log_out = '\n'.join(str(i) for i in result) if isinstance(result, (list, tuple)) else str(result)
+        log(f"{func.__name__}() returns:\n{indent(log_out, '    ')}", 2)
         return result
     return wrapper
 
@@ -55,15 +67,14 @@ def process_code_string(s):
 
 def extract_code_block(s, is_python):
     s = s.replace('\r', '')
-    s = process_code_string(s)
     pattern = r'```(?:\s*(\w+?)\s*\n)?(.*?)```'
     matches = re.findall(pattern, s, re.DOTALL)
     if len(matches) < 1:
         return ''
     code = ''
-    for match in matches:
-        is_python = identify_lang(match) if is_python is None else is_python
-        code += match[1] if is_python else re.sub(r'^(?![!])', '!', match[1], flags=re.MULTILINE)
+    for m in matches:
+        is_python = identify_lang(m) if is_python is None else is_python
+        code += m[1] if is_python else re.sub(r'^(?![!])', '!', m[1], flags=re.MULTILINE)
     return code.rstrip()
 
 def process_markdown_data(df):
@@ -152,7 +163,7 @@ class VirtualEnvironment:
             self.python_executable = "python"
             self.pip_executable = "pip"
 
-    def _run_cmd(self, command):
+    def _run_cmd(self, command, timeout=5):
         replacements = {
             "python": self.python_executable,
             "pip": self.pip_executable,
@@ -169,7 +180,10 @@ class VirtualEnvironment:
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                timeout=timeout,
             ).stdout.decode()
+        except subprocess.TimeoutExpired:
+            output = "TimeoutError: Execution Exceeded Time Limit (Suspected Infinite Loop)"
         except subprocess.CalledProcessError as error:
             output = str(error.stdout.decode()).strip()
         return output
@@ -178,15 +192,17 @@ class VirtualEnvironment:
         code_string = code_string.rstrip()
         ls = re.findall(r'^!(.*)$', code_string, re.MULTILINE)
         code_string = re.sub(r'^(!)', r'#\1', code_string, flags=re.MULTILINE)
-        with open(script_name, 'w') as f:
+        with open(script_name, 'w', encoding='utf-8') as f:
             f.write(code_string)
         ls.append(f"python {script_name}")
         return '\n'.join([self._run_cmd(s) for s in ls]).rstrip()
 
-    def execute(self, s, is_python=None, template='[Code]:\n```python\n{x_in}\n```\n\n[Output]:\n```\n{x_out}\n```\n'):
+    def execute(self, s, is_python=None, join=True):
         x_in = extract_code_block(s, is_python)
         x_out = self._run(x_in)
-        return template.format(x_in=x_in, x_out=x_out)
+        if join is True:
+            return '[Code]:\n```python\n{x_in}\n```\n\n[Output]:\n```\n{x_out}\n```\n'.format(x_in=x_in, x_out=x_out)
+        return f'```python\n{x_in}\n```', f'```\n{x_out}\n```'
 
 class RM:
     def __init__(self, configs=default_config_for_RM, model_id="BAAI/bge-small-en", query_instruction='Represent this sentence for searching relevant passages: '):
@@ -253,29 +269,87 @@ class RM:
         ls_topk = df_topk.apply(lambda row: template.format(**row), axis=1).tolist()
         return ls_topk
 
-
 class LM:
-    def __init__(self, model_id = 'TheBloke/WizardCoder-Python-7B-V1.0-GPTQ'):
-        self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="auto", revision="main")
-        self.model.eval()
-        self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
-        self.default_prohibits = [[13, 13, 13], [13, 30004, 13, 13], [13, 30004, 13, 30004]]
-        self.default_cwd = os.getcwd()
-
     @torch.no_grad()
-    def _constrained_beam(self, input_beam, constraint, prohibits, num_beams, cache_fn, norm_factor = .0):
-        fn_to_save = os.path.join(self.default_cwd, cache_fn)
-        fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
-        prohibits = prohibits if prohibits else self.default_prohibits
+    def __init__(self, model_id = 'TheBloke/WizardCoder-Python-7B-V1.0-GPTQ', default_forbid=True): # 'TheBloke/speechless-tora-code-7B-v1.0-AWQ' # 'TheBloke/speechless-tora-code-7B-v1.0-GPTQ' # 'TheBloke/WizardCoder-Python-7B-V1.0-GPTQ' # 'WizardLM/WizardCoder-1B-V1.0' # 'PY007/TinyLlama-1.1B-intermediate-step-480k-1T' # 'PY007/TinyLlama-1.1B-python-v0.1' # 'microsoft/phi-1_5'
+        if '-GPTQ' in model_id:
+            log('LM(gptq)')
+            # self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, device_map="auto").eval()
+            # self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, device_map="auto", revision='gptq-8bit-32g-actorder_True').eval()
+            # self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto", revision='gptq-8bit-32g-actorder_True').eval()
+            self.model = AutoModelForCausalLM.from_pretrained(model_id, device_map="auto").eval()
+            self.model_device = self.model.device
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+        # elif 'microsoft/phi-1' in model_id:
+        #     log('LM(phi)')
+        #     torch.set_default_device("cuda")
+        #     self.model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True).eval()
+        #     self.model_device = self.model.device
+        #     self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        # elif '-AWQ' in model_id:
+        #     log('LM(awq)')
+        #     from awq import AutoAWQForCausalLM
+        #     self.model = AutoAWQForCausalLM.from_quantized(model_id, fuse_layers=True, trust_remote_code=False, safetensors=True) # ?eval()
+        #     self.model_device = 'cuda'
+        #     self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=False)
+        else:
+            log('LM(hf)')
+            self.model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, device_map="auto").eval()
+            # self.model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True).eval()
+            self.model_device = self.model.device
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+            
+        self._init_tokenizer()
+        self.default_forbid = []
+        if default_forbid is True:
+            self.default_forbid += self._subsentence_tokenizer(['\n\n\n', '\n\r\n\n', '\n\r\n\r'])
+        elif default_forbid is False:
+            pass
+        else:
+            self.default_forbid += self._subsentence_tokenizer(default_forbid)
+        log(f'{self.default_forbid=}', 5)
+        log(f'{self._lf=}', 5)
+
+    def _init_tokenizer(self):
+        if all(len(sublist) == 1 for sublist in self.tokenizer(['\n', '\n\n']).input_ids):
+            self._lf = None
+        else:
+            self._lf = self.tokenizer('\n', add_special_tokens=False).input_ids
+
+    def _subsentence_tokenizer(self, ls):
+        if len(ls) < 1:
+            return []
+        ls = [ls] if isinstance(ls, str) else list(ls)
+        if self._lf is None:
+            return self.tokenizer(ls).input_ids
+        ls = ['\n'+s for s in ls]
+        ii = self.tokenizer(ls, add_special_tokens=False).input_ids
+        ii = [i[len(self._lf):] for i in ii]
+        return ii
+
+    def _subsentence_decoder(self, ls):
+        if self._lf is None:
+            return self.tokenizer.decode(ls)
+        return self.tokenizer.decode([self._lf[-1]] + list(ls))[1:]
+    
+    @torch.no_grad()
+    def _constrained_beam(self, input_beam, constraint, forbid, num_beams, norm_factor = .0, patience_limit = 10):
         max_new_tokens, required_tokens = constraint
-        required_tokens_pt = [torch.tensor(i).unsqueeze(0).to(self.model.device) for i in required_tokens]
+        required_tokens_pt = [torch.tensor(i).unsqueeze(0).to(self.model_device) for i in required_tokens]
         unique_heads, inverse_indices = torch.unique(torch.tensor([i[0] for i in required_tokens]), return_inverse=True)
-        unique_heads = unique_heads.to(self.model.device)
+        unique_heads = unique_heads.to(self.model_device)
         adhoc = max(len(i) for i in required_tokens)
-        beams = [(input_beam[0].to(self.model.device), input_beam[1][-adhoc:], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None)]
+        beams = [(input_beam[0], input_beam[1][-adhoc:], 0.0, input_beam[3])]
         best_postfixed = (None, None, float('-inf'), None)
-        best_compatibility = float('-inf')
+        best_head_compatibility = float('-inf')
+        best_postfix_compatibility = float('-inf')
+        patience = None
         for i in range(max_new_tokens):
+            if patience:
+                if patience < 0:
+                    break
+                else:
+                    patience -= 1
             new_beams = []
             for beam in beams:
                 beam_input_ids, beam_output_tokens, beam_score, beam_kv = beam
@@ -284,40 +358,47 @@ class LM:
                 new_kv = new_outputs.past_key_values
                 topk = torch.topk(new_logits, num_beams)
                 unique_score = new_logits[0, unique_heads]
-                diff_score = torch.max(unique_score) - torch.mean(topk.values[0])
-                list_next_token_id = torch.cat((topk.indices[0], unique_heads), dim=0)
-                list_next_score = torch.cat((topk.values[0], unique_score), dim=0)
-                if diff_score > best_compatibility:
+                mean_topk = torch.mean(topk.values[0])
+                diff_head_score = torch.max(unique_score) - mean_topk
+                # list_next_token_id = torch.cat((topk.indices[0], unique_heads), dim=0)
+                # list_next_score = torch.cat((topk.values[0], unique_score), dim=0)
+                list_next_token_id = topk.indices[0]
+                list_next_score = topk.values[0]
+                if diff_head_score > best_head_compatibility:
                     for postfix_tokens, postfix_score in zip(required_tokens_pt, unique_score[inverse_indices]):
                         if postfix_tokens.shape[1] > 1:
                             postfix_logits = self.model(postfix_tokens[:,:-1], use_cache=False, past_key_values=new_kv).logits
                             postfix_score += torch.sum(postfix_logits[0, torch.arange(postfix_tokens.shape[1]-1), postfix_tokens.squeeze(0)[1:]])
-                        forced_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + postfix_score) / (len(beam_output_tokens) + postfix_tokens.shape[1] + norm_factor)
-                        if forced_score > best_postfixed[2]:
-                            best_postfixed = (postfix_tokens, beam_output_tokens + postfix_tokens.squeeze(0).tolist(), forced_score, new_kv)
-                            best_compatibility = diff_score
+                        diff_postfix_score = postfix_score/postfix_tokens.shape[1] - mean_topk
+                        if diff_postfix_score > best_postfix_compatibility:
+                            forced_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + postfix_score) / (len(beam_output_tokens) + postfix_tokens.shape[1] + norm_factor)
+                            if forced_score > best_postfixed[2]:
+                                best_postfixed = (postfix_tokens, beam_output_tokens + postfix_tokens.squeeze(0).tolist(), forced_score, new_kv)
+                                best_head_compatibility = diff_head_score
+                                best_postfix_compatibility = diff_postfix_score
+                                patience = patience_limit
                 for next_token_id, next_score in zip(list_next_token_id, list_next_score):
                     new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
                     new_output_tokens = beam_output_tokens + [next_token_id.item()]
                     new_score = ((beam_score * (len(beam_output_tokens) + norm_factor)) + next_score.item()) / (len(new_output_tokens) + norm_factor)
-                    if all(new_output_tokens[-len(p):] != p for p in prohibits) and (next_token_id != self.tokenizer.eos_token_id):
+                    if all(new_output_tokens[-len(p):] != p for p in forbid) and (next_token_id != self.tokenizer.eos_token_id):
                         new_beam = (new_input_ids, new_output_tokens, new_score, new_kv)
-                        new_beams.append(new_beam)
-                        new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
-            for new_beam in new_beams:
-                if any(new_beam[1][-len(sublist):] == sublist for sublist in required_tokens):
-                    torch.save(new_beam[-1], fn_to_save)
-                    return (new_beam[0], new_beam[1][adhoc:], new_beam[2], cache_fn)
+                        if any(new_beam[1][-len(sublist):] == sublist for sublist in required_tokens):
+                            if new_beam[2] > best_postfixed[2]:
+                                patience = patience_limit
+                                best_postfixed = new_beam
+                        else:
+                            new_beams.append(new_beam)
+                            new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
+                            # if patience:
+                            #     if new_beam[2] > best_postfixed[2]:
+                            #         patience = None
             beams = new_beams
-        torch.save(best_postfixed[-1], fn_to_save)
-        return (best_postfixed[0], best_postfixed[1][adhoc:], best_postfixed[2], cache_fn)
+        return (best_postfixed[0], best_postfixed[1][adhoc:], best_postfixed[2], best_postfixed[3])
 
     @torch.no_grad()
-    def _unconstrained_beam(self, input_beam, max_new_tokens, prohibits, num_beams, cache_fn, norm_factor = .0, patience_limit = 10):
-        fn_to_save = os.path.join(self.default_cwd, cache_fn)
-        fn_to_load = os.path.join(self.default_cwd, input_beam[3]) if input_beam[3] is not None else None
-        prohibits = prohibits if prohibits else self.default_prohibits
-        beams = [(input_beam[0].to(self.model.device), [], 0.0, torch.load(fn_to_load) if (fn_to_load is not None) else None )]
+    def _unconstrained_beam(self, input_beam, max_new_tokens, forbid, num_beams, norm_factor = .0, patience_limit = 10):
+        beams = [(input_beam[0], [], 0.0, input_beam[3])]
         best_eos = (None, None, float('-inf'), None)
         patience = float('inf')
         for i in range(max_new_tokens):
@@ -339,28 +420,20 @@ class LM:
                     if (next_token_id == self.tokenizer.eos_token_id) and (new_score > best_eos[2]):
                         best_eos = beam
                         patience = patience_limit
-                    elif all(new_output_tokens[-len(p):] != p for p in prohibits):
+                    elif all(new_output_tokens[-len(p):] != p for p in forbid):
                         new_beams.append((new_input_ids, new_output_tokens, new_score, new_kv))
                         new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
             beams = new_beams
-        result = max([best_eos] + beams, key=lambda x:x[2])
-        torch.save(result[-1], fn_to_save)
-        return (*result[:-1], cache_fn)
+        # result = max([best_eos] + beams, key=lambda x:x[2])
+        result = best_eos if best_eos[1] else beams[0]
+        return result
 
-    def _get_constraints(self, template, default_padding=5, default_interval=500):
-        def tokenize_constraints(s):
-            if len(s) < 1:
-                return []
-            s = [s] if isinstance(s, str) else list(s)
-            s_ = ['\n'+i for i  in s]
-            input_ids = self.tokenizer(s+s_, add_special_tokens=False).input_ids
-            input_ids = [sub[1:] if sub and sub[0] == 29871 else sub for sub in input_ids]
-            input_ids[len(s):] = [i[1:] for i in input_ids[len(s):]]
-            return [list(x) for x in set(tuple(x) for x in input_ids)]
+
+    def _get_constraints(self, template, default_padding=1, default_interval=500):
         if len(template) == 1:
             if isinstance(template[0], int):
-                return [(template[0], None)]
-            return [(default_padding, tokenize_constraints(template[0]))]
+                return [(template[0], [])]
+            return [(default_padding, self._subsentence_tokenizer(template[0]))]
         template = list(template)
         template = [default_padding] + template if not isinstance(template[0], int) else template
         template = template + [''] if isinstance(template[-1], int) else template
@@ -378,38 +451,65 @@ class LM:
                 fixed_template.append(i)
                 expect_int = True
         assert len(fixed_template) % 2 == 0
-        constraints = [(fixed_template[i], tokenize_constraints(fixed_template[i+1])) for i in range(0, len(fixed_template), 2)]
+        constraints = [(fixed_template[i], self._subsentence_tokenizer(fixed_template[i+1])) for i in range(0, len(fixed_template), 2)]
         return constraints
 
+    def _get_forbid(self, ls):
+        if ls is None:
+            return self.default_forbid
+        ls = ls + [' '+i for i in ls if not i[0].isspace()]
+        return self.default_forbid + self._subsentence_tokenizer(ls)
+
     @torch.no_grad()
-    def generate(self, input_txt, template = (('\n```python', '\n```sh'), '\n```'), constraints = None, prohibits = None, num_beams = 3, cache_fn = 'kv'):
-        os.remove(cache_fn) if os.path.exists(cache_fn) else None
+    def _generate(self, input_txt, constraints, forbid, num_beams):
         input_ids = self.tokenizer(input_txt, add_special_tokens=True, return_tensors='pt').input_ids
-        i_beam = (input_ids, input_ids.squeeze(0).tolist(), None, None)
+        beam = (input_ids.to(self.model_device), input_ids.squeeze(0).tolist(), None, None)
         result = []
-        constraints = self._get_constraints(template) if constraints is None else constraints
         for constraint in constraints:
             if len(constraint[1]) < 1:
-                i_beam = self._unconstrained_beam(i_beam, max_new_tokens = constraint[0], prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
-                torch.cuda.empty_cache()
-                result += i_beam[1]
+                beam = self._unconstrained_beam(beam, max_new_tokens = constraint[0], forbid=forbid, num_beams=num_beams)
+                to_decode = beam[1]
+                result.append(to_decode)
             else:
-                i_beam = self._constrained_beam(i_beam, constraint = constraint, prohibits=prohibits, num_beams=num_beams, cache_fn=cache_fn)
-                torch.cuda.empty_cache()
-                result += i_beam[1]
-        return self.tokenizer.decode(result)
+                beam = self._constrained_beam(beam, constraint = constraint, forbid=forbid, num_beams=num_beams)
+                to_decode = beam[1]
+                result.extend([[to_decode[:-len(p)], p] for p in constraint[1] if to_decode[-len(p):] == p][0])
+        result = [self._subsentence_decoder(i) for i in result]
+        return result
+        
+    @torch.no_grad()
+    def generate(self, input_txt, template = (('\n```python', '\n```sh'), '\n```'), constraints = None, forbid = None, num_beams = 3, join = True):
+        constraints = self._get_constraints(template) if constraints is None else constraints
+        log(f'{constraints=}')
+        forbid = self._get_forbid(forbid)
+        log(f'{forbid=}')
+        result = self._generate(input_txt, constraints, forbid, num_beams)
+        torch.cuda.empty_cache()
+        if join is True:
+            return ''.join(result)
+        return result
 
 class Roy:
     def __init__(self, config=None):
         if config is None:
             config = {}
-        self.template = config.get('template', "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Response:\n")
-        self._venv = None
-        self._lm = None
-        self._rm = None
-        self.execute = trace_method(config.get('execute', self.venv.execute))
-        self.generate = trace_method(config.get('generate', self.lm.generate))
-        self.retrieve = trace_method(config.get('retrieve', self.rm.retrieve))
+        self.template = config.get('template', "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{instruction}\n\n### Response:")
+        self._venv = config.get('venv', None)
+        self._lm = config.get('lm', None)
+        self._rm = config.get('rm', None)
+
+    def format(self, instruction, data=None):
+        if data is None:
+            data={}
+        template = self.template.format(instruction=instruction.rstrip())
+        if len(data) < 1:
+            return template
+        elif isinstance(data, pd.DataFrame):
+            return data.apply(lambda row: template.format(**row), axis=1).tolist()
+        elif isinstance(data, (dict, pd.Series)):
+            return template.format(**data)
+        else:
+            raise ValueError("Unsupported data type. Data must be a dict, Series, or DataFrame.")
 
     @property
     def venv(self):
@@ -430,16 +530,16 @@ class Roy:
         return self._rm
 
     @trace_method
-    def format(self, instruction, data={}):
-        template = self.template.format(instruction=instruction.rstrip())
-        if len(data) < 1:
-            return template
-        elif isinstance(data, pd.DataFrame):
-            return data.apply(lambda row: template.format(**row), axis=1).tolist()
-        elif isinstance(data, (dict, pd.Series)):
-            return template.format(**data)
-        else:
-            raise ValueError("Unsupported data type. Data must be a dict, Series, or DataFrame.")
+    def execute(self, *args, **kwargs):
+        return self.venv.execute(*args, **kwargs)
+
+    @trace_method
+    def generate(self, *args, **kwargs):
+        return self.lm.generate(*args, **kwargs)
+
+    @trace_method
+    def retrieve(self, *args, **kwargs):
+        return self.rm.retrieve(*args, **kwargs)
 
 class Roys(Roy):
     def create(self, agents, tools=None):
