@@ -23,6 +23,7 @@ from tqdm.auto import tqdm
 from inspect import getsource
 from io import StringIO
 from datetime import datetime, timedelta
+import copy
 
 log_buffer = StringIO()
 LOG_LEVEL = 5
@@ -344,13 +345,12 @@ class LM:
         best_postfixed = (None, None, float('-inf'), None)
         best_head_compatibility = float('-inf')
         best_postfix_compatibility = float('-inf')
-        patience = None
+        patience = float('inf')
         for i in range(max_new_tokens):
-            if patience:
-                if patience < 0:
-                    break
-                else:
-                    patience -= 1
+            if patience < 0:
+                break
+            else:
+                patience -= 1
             new_beams = []
             for beam in beams:
                 beam_input_ids, beam_output_tokens, beam_score, beam_kv = beam
@@ -377,7 +377,8 @@ class LM:
                                 best_postfixed = (postfix_tokens, beam_output_tokens + postfix_tokens.squeeze(0).tolist(), forced_score, new_kv)
                                 best_head_compatibility = diff_head_score
                                 best_postfix_compatibility = diff_postfix_score
-                                patience = patience_limit
+                                if patience < patience_limit:
+                                    patience = patience_limit
                 for next_token_id, next_score in zip(list_next_token_id, list_next_score):
                     new_input_ids = next_token_id.unsqueeze(0).unsqueeze(0)
                     new_output_tokens = beam_output_tokens + [next_token_id.item()]
@@ -391,9 +392,6 @@ class LM:
                         else:
                             new_beams.append(new_beam)
                             new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
-                            # if patience:
-                            #     if new_beam[2] > best_postfixed[2]:
-                            #         patience = None
             beams = new_beams
         return (best_postfixed[0], best_postfixed[1][adhoc:], best_postfixed[2], best_postfixed[3])
 
@@ -425,7 +423,6 @@ class LM:
                         new_beams.append((new_input_ids, new_output_tokens, new_score, new_kv))
                         new_beams = sorted(new_beams, key=lambda x: x[2], reverse=True)[:num_beams]
             beams = new_beams
-        # result = max([best_eos] + beams, key=lambda x:x[2])
         result = best_eos if best_eos[1] else beams[0]
         return result
 
@@ -573,14 +570,17 @@ class Roys(Roy):
     def start(self, requests):
         self.dict_cache = {key: [value] if isinstance(value, str) else value for key, value in requests.items()}
         for turn in range(2):
+            if '_' in self.dict_cache:
+                break
             log(f'Turn {turn}', 1)
+            snapshot = copy.deepcopy(self.dict_cache)
             for _, row_agent in self.df_agents.iterrows():
                 key_i = row_agent['in']
                 key_o = row_agent['to']
                 ls_fxn = row_agent['fxn']
-                if key_i in self.dict_cache.keys():
-                    agent_output = self._map_fxn(ls_fxn, self.dict_cache[key_i])
+                if key_i in snapshot.keys():
+                    agent_output = self._map_fxn(ls_fxn, snapshot[key_i])
                     self.dict_cache[key_o] = agent_output
                     _log = '\n'.join(agent_output)
-                    log(f"<<<{row_agent['name']}>>>: {_log}", 0)
+                    log(f"<<<{row_agent['name']}>>>:\n{_log}", 0)
         return self.dict_cache
