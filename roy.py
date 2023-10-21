@@ -145,8 +145,9 @@ def identify_lang(match): # stub
     return is_python
 
 class VirtualEnvironment:
-    def __init__(self, venv_path='venvRoy'):
+    def __init__(self, time_limit=20, venv_path='venvRoy'):
         self.venv_path = venv_path
+        self.time_limit = time_limit
         try:
             if not os.path.exists(self.venv_path):
                 venv.EnvBuilder(with_pip=True).create(self.venv_path)
@@ -163,7 +164,7 @@ class VirtualEnvironment:
             self.python_executable = "python"
             self.pip_executable = "pip"
 
-    def _run_cmd(self, command, timeout=5):
+    def _run_cmd(self, command):
         replacements = {
             "python": self.python_executable,
             "pip": self.pip_executable,
@@ -180,7 +181,7 @@ class VirtualEnvironment:
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                timeout=timeout,
+                timeout=self.time_limit,
             ).stdout.decode()
         except subprocess.TimeoutExpired:
             output = "TimeoutError: Execution Exceeded Time Limit (Suspected Infinite Loop)"

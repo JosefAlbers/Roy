@@ -63,7 +63,7 @@ Agents recursively improve via critiquing each other.
 ```python
 s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection.\n"
 for i in range(2):
-    c = roy.generate(s)
+    c = roy.generate(s, forbid=['input'])
     s += roy.execute(c)
 ```
 
@@ -73,11 +73,11 @@ Agents collaborate in tight loops to iteratively refine outputs to specification
 
 ```python
 user_request = "Compare the year-to-date gain for META and TESLA.\n"
-ai_response = roy.generate(user_request)
+ai_response = roy.generate(user_request, ('\n```python', ' yfinance', '\n```'))
 for i in range(2):
     shell_execution = roy.execute(ai_response)
     if 'ModuleNotFoundError' in shell_execution:
-        roy.execute(roy.generate(roy.format(f'Write a shell command to address the error encountered while running this Python code:\n\n{shell_execution}')), False)
+        roy.execute(roy.generate(roy.format(f'Write a shell command to address the error encountered while running this Python code:\n\n{shell_execution}')))
     elif 'Error' in shell_execution:
         ai_response = roy.generate(roy.format(f'Modify the code to address the error encountered:\n\n{shell_execution}'))
     else:
