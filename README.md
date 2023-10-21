@@ -41,9 +41,9 @@ roy.generate(roy.format(s))
 Control output length, format, etc.
 
 ```python
-roy.generate(s, ('```python', '```'))                    # Generate a python code block
-roy.generate(s, (('```python', '```javascript'), '```')) # Generate python or javascript codes
-roy.generate(s, ('```python', 100, '```'))               # Generate a code block of size less than 100 tokens
+roy.generate(s, ('\n```python', '\n```'))                    # Generate a python code block
+roy.generate(s, (('\n```python', '\n```javascript'), '\n```')) # Generate python or javascript codes
+roy.generate(s, ('\n```python', 100, '\n```'))               # Generate a code block of size less than 100 tokens
 ```
 
 ### **Retrieval Augmented Generation**
