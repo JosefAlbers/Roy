@@ -42,7 +42,7 @@ Roy provides a simple way to evaluate and iterate on your model architecture.. T
 ```python
 from Roy.util import piecewise_human_eval
 
-# Comparing different language models
+# Comparing different language models (ㅅakes around 30 minutes each on a free Google Colab runtime)
 piecewise_human_eval(0, lm_id='TheBloke/WizardCoder-Python-7B-V1.0-GPTQ') 
 # -> {'pass@1': 0.6341463414634146}
 piecewise_human_eval(0, lm_id='TheBloke/tora-code-7B-v1.0-GPTQ') 
@@ -53,8 +53,6 @@ piecewise_human_eval(0, lm_id='TheBloke/Arithmo-Mistral-7B-GPTQ')
 # Testing a custom agent architecture
 piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
 ```
-
-*Takes around 30 minutes each on a free Google Colab runtime.*
 
 ### **Constrained Beam Search**
 
