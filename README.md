@@ -54,7 +54,7 @@ Use templates to structure conversations (control output length, format, etc)
 ```python
 from roy import Roy, Roys
 roy = Roy()
-s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
+s = 'What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
 roy.generate(roy.format(s))
 
 # Constrain output structure, length, include/exclude certain tokens, etc
