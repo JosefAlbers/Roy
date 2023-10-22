@@ -136,7 +136,6 @@ roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.'}
 def custom_switch(self, c):
     py_str = 'Modify the code to address the error encountered:\n\n'
     sh_str = 'Write a shell command to address the error encountered while running this Python code:\n\n'
-    # x = roys.execute(c)
     x = self.execute(c)
     if 'ModuleNotFoundError' in x:
         self.execute(self.generate(sh_str+x))
