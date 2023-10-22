@@ -380,7 +380,7 @@ def evaluate_functional_correctness(
 
     return out_file, correct_file
 
-def evaluate(fx, debug=None, eval_file='heval/HumanEval.jsonl.gz'):
+def evaluate(fx, debug=None, eval_file='HumanEval.jsonl.gz'):
     raw_file = generate_raw(fx, debug=debug, eval_file=eval_file)
     code_file = extract_code(eval_file=eval_file)
     result_file, correct_file = evaluate_functional_correctness(problem_file=eval_file)
