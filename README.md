@@ -3,7 +3,7 @@
 [<img src="https://colab.research.google.com/assets/colab-badge.svg" />](https://colab.research.google.com/github/JosefAlbers/Roy/blob/main/quickstart.ipynb)
 [![DOI](https://zenodo.org/badge/699801819.svg)](https://zenodo.org/badge/latestdoi/699801819)
 
-Roy is a lightweight alternative to `autogen`, for developing advanced multi-agent systems using language models. It aims to simplify and democratize the development of emergent collective intelligence.
+Roy is a lightweight alternative to `autogen` for developing advanced multi-agent systems using language models. It aims to simplify and democratize the development of emergent collective intelligence.
 
 ## Features
 
@@ -23,7 +23,7 @@ pip install -U transformers optimum accelerate auto-gptq --extra-index-url https
 ```
 
 ```python
-from roy import Roy
+from roy import Roy, Roys
 roy = Roy()
 ```
 
@@ -32,7 +32,7 @@ roy = Roy()
 Use templates to structure conversations and provide context.
 
 ```python
-s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?\n'
+s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
 roy.generate(roy.format(s))
 ```
 
@@ -41,9 +41,9 @@ roy.generate(roy.format(s))
 Control output length, format, etc.
 
 ```python
-roy.generate(s, ('\n```python', '\n```'))                    # Generate a python code block
+roy.generate(s, ('\n```python', '\n```'))                      # Generate a python code block
 roy.generate(s, (('\n```python', '\n```javascript'), '\n```')) # Generate python or javascript codes
-roy.generate(s, ('\n```python', 100, '\n```'))               # Generate a code block of size less than 100 tokens
+roy.generate(s, ('\n```python', 100, '\n```'))                 # Generate a code block of size less than 100 tokens
 ```
 
 ### **Retrieval Augmented Generation**
@@ -51,7 +51,7 @@ roy.generate(s, ('\n```python', 100, '\n```'))               # Generate a code b
 Enhance generation with relevant knowledge.
 
 ```python
-s = 'Create a text to image generator.\n'
+s = 'Create a text to image generator.'
 r = roy.retrieve(s, n_topk=3, src='huggingface')
 [roy.generate(s) for s in r]
 ```
@@ -63,7 +63,7 @@ Agents recursively improve via critiquing each other.
 ```python
 s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection.\n"
 for i in range(2):
-    c = roy.generate(s, forbid=['input'])
+    c = roy.generate(s, prohibitions=['input'])
     s += roy.execute(c)
 ```
 
@@ -72,7 +72,7 @@ for i in range(2):
 Agents collaborate in tight loops to iteratively refine outputs to specification.
 
 ```python
-user_request = "Compare the year-to-date gain for META and TESLA.\n"
+user_request = "Compare the year-to-date gain for META and TESLA."
 ai_response = roy.generate(user_request, ('\n```python', ' yfinance', '\n```'))
 for i in range(2):
     shell_execution = roy.execute(ai_response)
@@ -84,17 +84,43 @@ for i in range(2):
         break
 ```
 
+### **Rapid Benchmarking**
+
+Roy provides a simple way to evaluate and iterate on your model architecture.. This allows you to:
+
+- Easily swap out components, such as language models, prompt formats, agent architectures, etc
+
+- Benchmark on different tasks like arithmetic, python coding, etc (defaults to a subset of OpenAI's HumanEval)
+
+- Identify agent's areas of strengths and weaknesses
+
+```python
+from util import piecewise_human_eval
+
+# Comparing different language models
+piecewise_human_eval(0, lm_id='TheBloke/WizardCoder-Python-7B-V1.0-GPTQ') 
+# -> {'pass@1': 0.6341463414634146}
+piecewise_human_eval(0, lm_id='TheBloke/tora-code-7B-v1.0-GPTQ') 
+# -> {'pass@1': 0.5609756097560976}
+piecewise_human_eval(0, lm_id='TheBloke/Arithmo-Mistral-7B-GPTQ')
+# -> {'pass@1': 0.5121951219512195}
+
+# Testing a custom agent architecture
+piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
+```
+
+*Takes around 30 minutes each on a free Google Colab runtime.*
+
 ### **Multi-Agent**
 
 Flexible primitives to build ecosystems of agents.
 
 ```python
-from roy import Roys
 roys = Roys()
 
 # AutoFeedback
 roys.create(agents = {'Coder': 'i = execute(generate(i))'})
-roys.start(requests = {'i': 'Create a mobile application that can track the health of elderly people living alone in rural areas.\n'})
+roys.start(requests = {'i': 'Create a mobile application that can track the health of elderly people living alone in rural areas.'})
 
 # Retrieval Augmented Generation
 roys.create(
@@ -102,7 +128,7 @@ roys.create(
         'Retriever': 'r = retrieve(i)',
         'Generator': 'o = generate(r)',
         })
-roys.start(requests = {'i': 'Create a Deutsch to English translator.\n'})
+roys.start(requests = {'i': 'Create a Deutsch to English translator.'})
 
 # Providing a custom tool to one of the agents using lambda
 roys.create(
@@ -111,19 +137,22 @@ roys.create(
         'Proxy': 'c = custom(execute(c))',
         },
     tools = {'custom': lambda x:f'Modify the code to address the error encountered:\n\n{x}' if 'Error' in x else None})
-roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.\n'})
+roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.'})
 
 # Another way to create a custom tool for agents
-def custom_switch(c):
+def custom_switch(self, c):
     py_str = 'Modify the code to address the error encountered:\n\n'
     sh_str = 'Write a shell command to address the error encountered while running this Python code:\n\n'
-    x = roys.execute(c)
+    # x = roys.execute(c)
+    x = self.execute(c)
     if 'ModuleNotFoundError' in x:
-        roys.execute(roys.generate(sh_str+x))
-        roys.dict_cache['c'] = [c]
+        # roys.execute(roys.generate(sh_str+x))
+        self.execute(self.generate(sh_str+x))
     elif 'Error' in x:
-        roys.dict_cache['i'] = [py_str+x]
-    return 'Success:\n\n'+x
+        # roys.dict_cache['i'] = [py_str+x]
+        self.dict_cache['i'] = [py_str+x]
+    else:
+        return '<<<Success>>>:\n\n'+x
     
 roys.create(
     agents = {
@@ -131,7 +160,7 @@ roys.create(
         'Proxy': '_ = protocol(c)',
         },
     tools = {'protocol': custom_switch})
-roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.\n'})
+roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.'})
 ```
 
 ## Emergent Multi-Agent Dynamics
