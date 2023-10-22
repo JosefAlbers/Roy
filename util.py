@@ -71,14 +71,14 @@ def aggregate_human_eval_results(key, d, hf_cfg=HF_CFG):
     return downloaded_files, list_npy, all_npy, all_scr
 
 def piecewise_human_eval(n=0, d=4, lm_id=LM_ID, fx=grind, hf_cfg=HF_CFG):
-    key = hf_cfg.get('key', None)
+    key = hf_cfg.get('key', None) if hf_cfg is not None else None
     log(f'{key}: {n}/{d}\n{lm_id=}\n----- BEGIN -----')
     roy = Roy({'lm': LM(lm_id)})
     roy.add_tool(fx, 'fx')
     list_files = evaluate(roy.fx, (n,d))
     log(f'{key}: {n}/{d}\n{lm_id=}\n{getsource(fx)}\n----- END -----', 0)
     list_files.append(dump_log())
-    if hf_cfg is None:
+    if key is None:
         return list_files
     api = HfApi(token=hf_cfg['token'])
     for file_i in list_files:
