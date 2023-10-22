@@ -78,20 +78,16 @@ r = roy.retrieve(s, n_topk=3, src='huggingface')
 
 ### **Auto-Feedback**
 
-Agents recursively improve via critiquing each other.
+Agents collaborate in tight loops to iteratively refine outputs to specification.
 
 ```python
+# Iterative multiturn chat style
 s = "Create a secure and unique secret code word with a Python script that involves multiple steps to ensure the highest level of confidentiality and protection.\n"
 for i in range(2):
     c = roy.generate(s, prohibitions=['input'])
     s += roy.execute(c)
-```
 
-### **Auto-Grinding**
-
-Agents collaborate in tight loops to iteratively refine outputs to specification.
-
-```python
+# Another way to implement auto-feedback
 user_request = "Compare the year-to-date gain for META and TESLA."
 ai_response = roy.generate(user_request, ('\n```python', ' yfinance', '\n```'))
 for i in range(2):
