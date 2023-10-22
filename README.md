@@ -27,22 +27,13 @@ from roy import Roy, Roys
 roy = Roy()
 ```
 
-### **Template-Based Generation**
-
-Use templates to structure conversations and provide context.
-
-```python
-s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
-roy.generate(roy.format(s))
-```
-
 ### **Rapid Benchmarking**
 
 Roy provides a simple way to evaluate and iterate on your model architecture.. This allows you to:
 
 - Easily swap out components, such as language models, prompt formats, agent architectures, etc
 
-- Benchmark on different tasks like arithmetic, python coding, etc (defaults to a subset of OpenAI's HumanEval)
+- Benchmark on different tasks like arithmetic, python coding, etc (default is OpenAI's HumanEval)
 
 - Identify agent's areas of strengths and weaknesses
 
@@ -62,6 +53,15 @@ piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
 ```
 
 *Takes around 30 minutes each on a free Google Colab runtime.*
+
+### **Template-Based Generation**
+
+Use templates to structure conversations and provide context.
+
+```python
+s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
+roy.generate(roy.format(s))
+```
 
 ### **Constrained Beam Search**
 
