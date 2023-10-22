@@ -22,13 +22,6 @@ pip install -r requirements.txt
 pip install -U transformers optimum accelerate auto-gptq --extra-index-url https://huggingface.github.io/autogptq-index/whl/cu118/
 ```
 
-```python
-from roy import Roy, Roys
-roy = Roy()
-s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
-roy.generate(roy.format(s))
-```
-
 ### **Rapid Benchmarking**
 
 Roy provides a simple way to evaluate and iterate on your model architecture.. This allows you to:
@@ -59,6 +52,12 @@ piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
 Use templates to structure conversations (control output length, format, etc)
 
 ```python
+from roy import Roy, Roys
+roy = Roy()
+s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
+roy.generate(roy.format(s))
+
+# Constrain output structure, length, include/exclude certain tokens, etc
 roy.generate(s, ('\n```python', '\n```'))                      # Generate a python code block
 roy.generate(s, (('\n```python', '\n```javascript'), '\n```')) # Generate python or javascript codes
 roy.generate(s, ('\n```python', 100, '\n```'))                 # Generate a code block of size less than 100 tokens
