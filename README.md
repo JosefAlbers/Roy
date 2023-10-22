@@ -25,6 +25,8 @@ pip install -U transformers optimum accelerate auto-gptq --extra-index-url https
 ```python
 from roy import Roy, Roys
 roy = Roy()
+s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
+roy.generate(roy.format(s))
 ```
 
 ### **Rapid Benchmarking**
@@ -38,7 +40,7 @@ Roy provides a simple way to evaluate and iterate on your model architecture.. T
 - Identify agent's areas of strengths and weaknesses
 
 ```python
-from util import piecewise_human_eval
+from Roy.util import piecewise_human_eval
 
 # Comparing different language models
 piecewise_human_eval(0, lm_id='TheBloke/WizardCoder-Python-7B-V1.0-GPTQ') 
@@ -54,18 +56,9 @@ piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
 
 *Takes around 30 minutes each on a free Google Colab runtime.*
 
-### **Template-Based Generation**
-
-Use templates to structure conversations and provide context.
-
-```python
-s = '"What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
-roy.generate(roy.format(s))
-```
-
 ### **Constrained Beam Search**
 
-Control output length, format, etc.
+Use templates to structure conversations (control output length, format, etc)
 
 ```python
 roy.generate(s, ('\n```python', '\n```'))                      # Generate a python code block
