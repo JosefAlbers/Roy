@@ -30,7 +30,7 @@ Roy provides a simple way to evaluate and iterate on your model architecture.. T
 
 - Benchmark on different tasks like arithmetic, python coding, etc (default is OpenAI's HumanEval)
 
-- Identify agent's areas of strengths and weaknesses
+- Quantify effect of each component's configuration on the agent's overall areas of strengths and weaknesses
 
 ```python
 from Roy.util import piecewise_human_eval
