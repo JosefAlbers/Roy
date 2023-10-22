@@ -36,6 +36,33 @@ s = '"What date is today? Which big tech stock has the largest year-to-date gain
 roy.generate(roy.format(s))
 ```
 
+### **Rapid Benchmarking**
+
+Roy provides a simple way to evaluate and iterate on your model architecture.. This allows you to:
+
+- Easily swap out components, such as language models, prompt formats, agent architectures, etc
+
+- Benchmark on different tasks like arithmetic, python coding, etc (defaults to a subset of OpenAI's HumanEval)
+
+- Identify agent's areas of strengths and weaknesses
+
+```python
+from util import piecewise_human_eval
+
+# Comparing different language models
+piecewise_human_eval(0, lm_id='TheBloke/WizardCoder-Python-7B-V1.0-GPTQ') 
+# -> {'pass@1': 0.6341463414634146}
+piecewise_human_eval(0, lm_id='TheBloke/tora-code-7B-v1.0-GPTQ') 
+# -> {'pass@1': 0.5609756097560976}
+piecewise_human_eval(0, lm_id='TheBloke/Arithmo-Mistral-7B-GPTQ')
+# -> {'pass@1': 0.5121951219512195}
+
+# Testing a custom agent architecture
+piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
+```
+
+*Takes around 30 minutes each on a free Google Colab runtime.*
+
 ### **Constrained Beam Search**
 
 Control output length, format, etc.
@@ -83,33 +110,6 @@ for i in range(2):
     else:
         break
 ```
-
-### **Rapid Benchmarking**
-
-Roy provides a simple way to evaluate and iterate on your model architecture.. This allows you to:
-
-- Easily swap out components, such as language models, prompt formats, agent architectures, etc
-
-- Benchmark on different tasks like arithmetic, python coding, etc (defaults to a subset of OpenAI's HumanEval)
-
-- Identify agent's areas of strengths and weaknesses
-
-```python
-from util import piecewise_human_eval
-
-# Comparing different language models
-piecewise_human_eval(0, lm_id='TheBloke/WizardCoder-Python-7B-V1.0-GPTQ') 
-# -> {'pass@1': 0.6341463414634146}
-piecewise_human_eval(0, lm_id='TheBloke/tora-code-7B-v1.0-GPTQ') 
-# -> {'pass@1': 0.5609756097560976}
-piecewise_human_eval(0, lm_id='TheBloke/Arithmo-Mistral-7B-GPTQ')
-# -> {'pass@1': 0.5121951219512195}
-
-# Testing a custom agent architecture
-piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
-```
-
-*Takes around 30 minutes each on a free Google Colab runtime.*
 
 ### **Multi-Agent**
 
