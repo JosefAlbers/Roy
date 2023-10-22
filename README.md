@@ -139,10 +139,8 @@ def custom_switch(self, c):
     # x = roys.execute(c)
     x = self.execute(c)
     if 'ModuleNotFoundError' in x:
-        # roys.execute(roys.generate(sh_str+x))
         self.execute(self.generate(sh_str+x))
     elif 'Error' in x:
-        # roys.dict_cache['i'] = [py_str+x]
         self.dict_cache['i'] = [py_str+x]
     else:
         return '<<<Success>>>:\n\n'+x
