@@ -22,45 +22,18 @@ pip install -r requirements.txt
 pip install -U transformers optimum accelerate auto-gptq --extra-index-url https://huggingface.github.io/autogptq-index/whl/cu118/
 ```
 
-### **Rapid Benchmarking**
-
-Roy provides a simple way to evaluate and iterate on your model architecture.. This allows you to:
-
-- Easily swap out components, such as language models, prompt formats, agent architectures, etc
-
-- Benchmark on different tasks like arithmetic, python coding, etc (default is OpenAI's HumanEval)
-
-- Quantify effect of each component's configuration on the agent's overall areas of strengths and weaknesses
-
 ```python
-from Roy.util import piecewise_human_eval
-
-# Comparing different language models (ㅅakes around 30 minutes each on a free Google Colab runtime)
-piecewise_human_eval(0, lm_id='TheBloke/WizardCoder-Python-7B-V1.0-GPTQ') 
-# -> {'pass@1': 0.6341463414634146}
-piecewise_human_eval(0, lm_id='TheBloke/tora-code-7B-v1.0-GPTQ') 
-# -> {'pass@1': 0.5609756097560976}
-piecewise_human_eval(0, lm_id='TheBloke/Arithmo-Mistral-7B-GPTQ')
-# -> {'pass@1': 0.5121951219512195}
-
-# Testing a custom agent architecture
-piecewise_human_eval(0, fx=<your_custom_Roy_agent>)
+from roy import Roy
+roy = Roy()
 ```
 
-### **Constrained Beam Search**
+### **Template-Based Generation**
 
-Use templates to structure conversations (control output length, format, etc)
+Use templates to structure conversations and provide context.
 
 ```python
-from roy import Roy, Roys
-roy = Roy()
 s = 'What date is today? Which big tech stock has the largest year-to-date gain this year? How much is the gain?'
 roy.generate(roy.format(s))
-
-# Constrain output structure, length, include/exclude certain tokens, etc
-roy.generate(s, ('\n```python', '\n```'))                      # Generate a python code block
-roy.generate(s, (('\n```python', '\n```javascript'), '\n```')) # Generate python or javascript codes
-roy.generate(s, ('\n```python', 100, '\n```'))                 # Generate a code block of size less than 100 tokens
 ```
 
 ### **Retrieval Augmented Generation**
@@ -83,25 +56,37 @@ s = "Create a secure and unique secret code word with a Python script that invol
 for i in range(2):
     c = roy.generate(s, prohibitions=['input'])
     s += roy.execute(c)
-
-# Another way to implement auto-feedback
-user_request = "Compare the year-to-date gain for META and TESLA."
-ai_response = roy.generate(user_request, ('\n```python', ' yfinance', '\n```'))
-for i in range(2):
-    shell_execution = roy.execute(ai_response)
-    if 'ModuleNotFoundError' in shell_execution:
-        roy.execute(roy.generate(roy.format(f'Write a shell command to address the error encountered while running this Python code:\n\n{shell_execution}')))
-    elif 'Error' in shell_execution:
-        ai_response = roy.generate(roy.format(f'Modify the code to address the error encountered:\n\n{shell_execution}'))
-    else:
-        break
 ```
 
-### **Multi-Agent**
+### **Rapid Benchmarking**
+
+Easily benchmark and iterate on your model architecture:
+
+- **Swap Components**: Language models, prompt formats, agent architectures etc.
+
+- **Test on Diverse Tasks**: Arithmetic, python coding, OpenAI's HumanEval etc.
+
+- **Quantify Improvements**: See how each change affects overall performance.
+
+```python
+from human_eval import evaluate
+evaluate(roy.generate)
+```
+
+### **Emergent Multi-Agent Dynamics**
+
+Roy aims to facilitate the emergence of complex, adaptive multi-agent systems. It draws inspiration from biological and AI concepts to enable decentralized coordination and continual learning.
+
+- **Survival of the Fittest** - Periodically evaluate and selectively retain high-performing agents based on accuracy, speed etc. Agents adapt through peer interactions.
+
+- **Mixture of Experts** - Designate agent expertise, dynamically assemble specialist teams, and route tasks to optimal experts. Continuously refine and augment experts. 
+
+These mechanisms facilitate the emergence of capable, adaptive, and efficient agent collectives.
 
 Flexible primitives to build ecosystems of agents.
 
 ```python
+from roy import Roys
 roys = Roys()
 
 # AutoFeedback
@@ -124,37 +109,7 @@ roys.create(
         },
     tools = {'custom': lambda x:f'Modify the code to address the error encountered:\n\n{x}' if 'Error' in x else None})
 roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.'})
-
-# Another way to create a custom tool for agents
-def custom_switch(self, c):
-    py_str = 'Modify the code to address the error encountered:\n\n'
-    sh_str = 'Write a shell command to address the error encountered while running this Python code:\n\n'
-    x = self.execute(c)
-    if 'ModuleNotFoundError' in x:
-        self.execute(self.generate(sh_str+x))
-    elif 'Error' in x:
-        self.dict_cache['i'] = [py_str+x]
-    else:
-        return '<<<Success>>>:\n\n'+x
-    
-roys.create(
-    agents = {
-        'Coder': 'c = generate(i)',
-        'Proxy': '_ = protocol(c)',
-        },
-    tools = {'protocol': custom_switch})
-roys.start(requests = {'i': 'Compare the year-to-date gain for META and TESLA.'})
 ```
-
-## Emergent Multi-Agent Dynamics
-
-Roy aims to facilitate the emergence of complex, adaptive multi-agent systems. It draws inspiration from biological and AI concepts to enable decentralized coordination and continual learning.
-
-- **Survival of the Fittest** - Periodically evaluate and selectively retain high-performing agents based on accuracy, speed etc. Agents adapt through peer interactions.
-
-- **Mixture of Experts** - Designate agent expertise, dynamically assemble specialist teams, and route tasks to optimal experts. Continuously refine and augment experts. 
-
-These mechanisms facilitate the emergence of capable, adaptive, and efficient agent collectives.
 
 ## Get Involved
 
